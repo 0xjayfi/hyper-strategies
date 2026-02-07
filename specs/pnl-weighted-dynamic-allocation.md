@@ -178,8 +178,8 @@ CREATE TABLE position_snapshots (
 
 **Depends on:** Phase 1, Phase 2
 
-- [ ] Create `src/metrics.py`.
-- [ ] Implement `compute_trade_metrics(trades: list[Trade], account_value: float, window_days: int) -> TradeMetrics`:
+- [x] Create `src/metrics.py`.
+- [x] Implement `compute_trade_metrics(trades: list[Trade], account_value: float, window_days: int) -> TradeMetrics`:
 
 ```python
 def compute_trade_metrics(trades, account_value, window_days):
@@ -236,9 +236,9 @@ def compute_trade_metrics(trades, account_value, window_days):
     )
 ```
 
-- [ ] Implement ROI proxy fallback: when the leaderboard doesn't provide per-timeframe realized ROI, use `roi_proxy = sum(closed_pnl over window) / account_value_at_window_start * 100`. Account value at window start is approximated from the earliest leaderboard snapshot within the window, or from the current `account_value - total_pnl` as a fallback.
+- [x] Implement ROI proxy fallback: when the leaderboard doesn't provide per-timeframe realized ROI, use `roi_proxy = sum(closed_pnl over window) / account_value_at_window_start * 100`. Account value at window start is approximated from the earliest leaderboard snapshot within the window, or from the current `account_value - total_pnl` as a fallback.
 
-- [ ] Implement batch computation: `recompute_all_metrics(trader_addresses, windows=[7, 30, 90])` that fetches trades for each window, calls `compute_trade_metrics`, and stores results.
+- [x] Implement batch computation: `recompute_all_metrics(trader_addresses, windows=[7, 30, 90])` that fetches trades for each window, calls `compute_trade_metrics`, and stores results.
 
 ---
 
@@ -246,8 +246,8 @@ def compute_trade_metrics(trades, account_value, window_days):
 
 **Depends on:** Phase 2, Phase 3
 
-- [ ] Create `src/scoring.py`.
-- [ ] Implement all component scores:
+- [x] Create `src/scoring.py`.
+- [x] Implement all component scores:
 
 ### 4.1 Normalized ROI
 
@@ -443,8 +443,8 @@ def compute_trader_score(metrics_7d, metrics_30d, metrics_90d,
 
 **Depends on:** Phase 3, Phase 4
 
-- [ ] Create `src/filters.py`.
-- [ ] Implement `apply_anti_luck_filter(metrics_7d, metrics_30d, metrics_90d) -> (bool, str)`:
+- [x] Create `src/filters.py`.
+- [x] Implement `apply_anti_luck_filter(metrics_7d, metrics_30d, metrics_90d) -> (bool, str)`:
 
 ```python
 def apply_anti_luck_filter(m7, m30, m90) -> tuple[bool, str]:
@@ -480,7 +480,7 @@ def apply_anti_luck_filter(m7, m30, m90) -> tuple[bool, str]:
     return True, "passed"
 ```
 
-- [ ] Implement blacklist check:
+- [x] Implement blacklist check:
 
 ```python
 LIQUIDATION_COOLDOWN_DAYS = 14
@@ -497,7 +497,7 @@ def blacklist_trader(address: str, reason: str, datastore):
     datastore.add_to_blacklist(address, reason, expires)
 ```
 
-- [ ] Implement combined eligibility gate:
+- [x] Implement combined eligibility gate:
 
 ```python
 def is_fully_eligible(address, m7, m30, m90, datastore) -> tuple[bool, str]:
@@ -518,7 +518,7 @@ def is_fully_eligible(address, m7, m30, m90, datastore) -> tuple[bool, str]:
 
 **Depends on:** Phase 4, Phase 5
 
-- [ ] Create `src/allocation.py`.
+- [x] Create `src/allocation.py`.
 
 ### 6.1 Score-to-Weight Conversion: Softmax
 
@@ -687,8 +687,8 @@ def compute_allocations(eligible_traders: list[str],
 
 **Depends on:** Phase 1, Phase 2
 
-- [ ] Create `src/position_monitor.py`.
-- [ ] Implement liquidation detection:
+- [x] Create `src/position_monitor.py`.
+- [x] Implement liquidation detection:
 
 ```python
 async def detect_liquidations(tracked_traders: list[str],
@@ -733,8 +733,8 @@ async def detect_liquidations(tracked_traders: list[str],
     return liquidated
 ```
 
-- [ ] Schedule position monitoring every 15 minutes.
-- [ ] On liquidation detection, emit event for downstream strategy to close copied positions.
+- [x] Schedule position monitoring every 15 minutes.
+- [x] On liquidation detection, emit event for downstream strategy to close copied positions.
 
 ---
 
@@ -742,8 +742,8 @@ async def detect_liquidations(tracked_traders: list[str],
 
 **Depends on:** Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7
 
-- [ ] Create `src/scheduler.py` using `APScheduler` or simple `asyncio` loop.
-- [ ] Define update schedule:
+- [x] Create `src/scheduler.py` using `APScheduler` or simple `asyncio` loop.
+- [x] Define update schedule:
 
 | Task | Frequency | What it does |
 |------|-----------|--------------|
@@ -754,7 +754,7 @@ async def detect_liquidations(tracked_traders: list[str],
 | `monitor_positions` | Every 15 minutes | Fetch positions for all tracked traders. Detect liquidations. Store snapshots. |
 | `cleanup_blacklist` | Daily | Remove expired blacklist entries. |
 
-- [ ] Implement the orchestration function:
+- [x] Implement the orchestration function:
 
 ```python
 async def full_recompute_cycle(nansen_client, datastore, risk_config):
@@ -821,7 +821,7 @@ async def full_recompute_cycle(nansen_client, datastore, risk_config):
 
 **Depends on:** Phase 6
 
-- [ ] Create `src/strategy_interface.py`.
+- [x] Create `src/strategy_interface.py`.
 
 ### 9.1 Core Interface
 
@@ -964,8 +964,8 @@ def size_copied_trade(trader_addr: str,
 
 **Depends on:** Phase 3, Phase 4, Phase 5, Phase 6
 
-- [ ] Create `src/backtest.py`.
-- [ ] Implement historical allocation simulation:
+- [x] Create `src/backtest.py`.
+- [x] Implement historical allocation simulation:
 
 ```python
 def backtest_allocations(historical_trades: dict[str, list],
@@ -1025,7 +1025,7 @@ def backtest_allocations(historical_trades: dict[str, list],
     )
 ```
 
-- [ ] Implement evaluation metrics:
+- [x] Implement evaluation metrics:
   - **Turnover**: Sum of absolute weight changes per rebalance. Target: < 30% per rebalance.
   - **Stability**: Standard deviation of each trader's weight over time. Lower is better.
   - **Drawdown**: Maximum peak-to-trough decline in simulated portfolio.
@@ -1037,7 +1037,7 @@ def backtest_allocations(historical_trades: dict[str, list],
 
 **Depends on:** Phase 3, Phase 4, Phase 5, Phase 6, Phase 7
 
-- [ ] Create `tests/` directory with `conftest.py` for fixtures.
+- [x] Create `tests/` directory with `conftest.py` for fixtures.
 
 ### 11.1 Metric Calculation Tests (`tests/test_metrics.py`)
 
