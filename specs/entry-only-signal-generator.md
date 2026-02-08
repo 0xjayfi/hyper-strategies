@@ -656,7 +656,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
 
 **Depends on:** Phase 1, Phase 4, Phase 5
 
-- [ ] **6.1** Create `src/executor.py` — Hyperliquid order placement:
+- [x] **6.1** Create `src/executor.py` — Hyperliquid order placement:
   ```python
   class HyperLiquidExecutor:
       def __init__(self, sdk_client):
@@ -728,7 +728,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
           return ExecutionResult(success=True, order_id=order.id)
   ```
 
-- [ ] **6.2** Implement stop price calculation:
+- [x] **6.2** Implement stop price calculation:
   ```python
   def compute_stop_price(entry_price: float, side: str) -> float:
       if side == "Long":
@@ -750,7 +750,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
 
 **Depends on:** Phase 1, Phase 2, Phase 6
 
-- [ ] **7.1** Create `src/position_monitor.py` — runs every 30 seconds:
+- [x] **7.1** Create `src/position_monitor.py` — runs every 30 seconds:
   ```python
   async def monitor_loop():
       while True:
@@ -786,7 +786,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
           await asyncio.sleep(30)
   ```
 
-- [ ] **7.2** Implement trailing stop logic:
+- [x] **7.2** Implement trailing stop logic:
   ```python
   def update_trailing_stop(pos, mark_price: float):
       if pos.side == "Long":
@@ -810,7 +810,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
           return mark_price >= pos.trailing_stop_price
   ```
 
-- [ ] **7.3** Implement trader liquidation detection:
+- [x] **7.3** Implement trader liquidation detection:
   ```python
   async def check_trader_position(our_pos):
       """Detect if trader's position disappeared without a Close action."""
@@ -855,7 +855,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
                        trader=our_pos.source_trader, token=our_pos.token_symbol)
   ```
 
-- [ ] **7.4** Define profit-taking tier placeholders:
+- [x] **7.4** Define profit-taking tier placeholders:
   ```python
   # Profit-taking tiers (% unrealized gain from entry)
   PROFIT_TAKE_TIER_1 = 10.0   # Take 25% off at +10%
@@ -864,7 +864,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
   # Set to None/0 to disable any tier
   ```
 
-- [ ] **7.5** Implement `close_position()` — market order to close, cancel existing stop orders, update DB status, log reason.
+- [x] **7.5** Implement `close_position()` — market order to close, cancel existing stop orders, update DB status, log reason.
 
 ---
 
@@ -872,7 +872,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
 
 **Depends on:** Phase 2, Phase 3, Phase 4, Phase 7
 
-- [ ] **8.1** Create `src/main.py` — entry point:
+- [x] **8.1** Create `src/main.py` — entry point:
   ```python
   async def main():
       # Init
@@ -889,9 +889,9 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
       )
   ```
 
-- [ ] **8.2** Implement graceful shutdown — handle SIGINT/SIGTERM, cancel all tasks, close open connections.
+- [x] **8.2** Implement graceful shutdown — handle SIGINT/SIGTERM, cancel all tasks, close open connections.
 
-- [ ] **8.3** Add structured logging throughout — every signal decision, every order, every stop update logged with full context for post-mortem analysis.
+- [x] **8.3** Add structured logging throughout — every signal decision, every order, every stop update logged with full context for post-mortem analysis.
 
 ---
 
@@ -899,7 +899,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
 
 **Depends on:** Phase 4, Phase 5, Phase 7
 
-- [ ] **9.1** Create `src/backtest.py` — historical simulation:
+- [x] **9.1** Create `src/backtest.py` — historical simulation:
   ```python
   class Backtester:
       def __init__(self, start_date, end_date, initial_capital):
@@ -917,7 +917,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
           # 7. Simulate stops using historical price data
   ```
 
-- [ ] **9.2** Slippage simulation model:
+- [x] **9.2** Slippage simulation model:
   ```python
   def simulate_slippage(token: str, side: str, size_usd: float) -> float:
       """Return estimated slippage in percent."""
@@ -928,7 +928,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
       return slippage * size_factor
   ```
 
-- [ ] **9.3** Paper trading mode — flag in config that replaces `HyperLiquidExecutor` with `PaperExecutor`:
+- [x] **9.3** Paper trading mode — flag in config that replaces `HyperLiquidExecutor` with `PaperExecutor`:
   ```python
   class PaperExecutor:
       """Simulates execution without placing real orders."""
@@ -938,7 +938,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
           ...
   ```
 
-- [ ] **9.4** Backtest metrics output:
+- [x] **9.4** Backtest metrics output:
   ```
   Total Return (%)
   Max Drawdown (%)
@@ -956,7 +956,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
 
 **Depends on:** Phase 1, Phase 5, Phase 6, Phase 7
 
-- [ ] **10.1** Stop placement correctness:
+- [x] **10.1** Stop placement correctness:
   ```python
   def test_stop_price_long():
       stop = compute_stop_price(entry_price=100.0, side="Long")
@@ -978,7 +978,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
       assert pos.trailing_stop_price == 105.8  # unchanged
   ```
 
-- [ ] **10.2** Time-stop test:
+- [x] **10.2** Time-stop test:
   ```python
   def test_time_stop_triggers_after_72h():
       pos = mock_position(opened_at=now() - timedelta(hours=73))
@@ -989,7 +989,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
       assert should_time_stop(pos) is False
   ```
 
-- [ ] **10.3** Slippage gate test:
+- [x] **10.3** Slippage gate test:
   ```python
   def test_slippage_gate_passes():
       # trade at $100, current at $101.5 → 1.5% < 2.0% threshold
@@ -1000,7 +1000,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
       assert slippage_check(trade_price=100, current_price=102.5, max_pct=2.0) is False
   ```
 
-- [ ] **10.4** Tiered sizing based on 7d ROI:
+- [x] **10.4** Tiered sizing based on 7d ROI:
   ```python
   def test_sizing_hot_trader():
       size = compute_copy_size(
@@ -1058,7 +1058,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
       assert size == 50_000
   ```
 
-- [ ] **10.5** Action filter tests:
+- [x] **10.5** Action filter tests:
   ```python
   def test_open_action_passes():
       assert action_filter("Open", ...) == "PASS"
@@ -1078,7 +1078,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
       assert action_filter("Close", ...) == "SKIP"
   ```
 
-- [ ] **10.6** Trader liquidation detection test:
+- [x] **10.6** Trader liquidation detection test:
   ```python
   async def test_liquidation_detection():
       # Setup: trader has BTC Long position
@@ -1095,7 +1095,7 @@ Smart money traders on Hyperliquid have demonstrated alpha in **entry timing** b
       assert trader_is_blacklisted(our_pos.source_trader, days=14)
   ```
 
-- [ ] **10.7** Integration test — end-to-end with mocked Nansen API:
+- [x] **10.7** Integration test — end-to-end with mocked Nansen API:
   ```python
   async def test_full_signal_pipeline():
       # 1. Load mock leaderboard → score traders

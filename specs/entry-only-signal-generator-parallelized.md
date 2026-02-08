@@ -89,8 +89,8 @@ Phases in this track run **in parallel**. Starts after Track 3 completes.
 Phases in this track run **in parallel**. Starts after Track 4 completes.
 
 ### Phase 6: Execution Module (agents: 1)
-- [ ] **6.1** Create `src/executor.py` with `HyperLiquidExecutor` — `execute_signal(signal)` places market or limit entry order via hyperliquid-python-sdk, sets isolated margin with leverage capped at 5x, places hard stop-loss order (opposite side market), records position in DB with stop_price, trailing_stop_price, highest/lowest price
-- [ ] **6.2** Implement `compute_stop_price(entry_price, side)` (Long: entry*(1-5/100), Short: entry*(1+5/100)) and `compute_trailing_stop_initial(entry_price, side)` (Long: entry*(1-8/100), Short: entry*(1+8/100))
+- [x] **6.1** Create `src/executor.py` with `HyperLiquidExecutor` — `execute_signal(signal)` places market or limit entry order via hyperliquid-python-sdk, sets isolated margin with leverage capped at 5x, places hard stop-loss order (opposite side market), records position in DB with stop_price, trailing_stop_price, highest/lowest price
+- [x] **6.2** Implement `compute_stop_price(entry_price, side)` (Long: entry*(1-5/100), Short: entry*(1+5/100)) and `compute_trailing_stop_initial(entry_price, side)` (Long: entry*(1-8/100), Short: entry*(1+8/100))
 
 ---
 
@@ -99,11 +99,11 @@ Phases in this track run **in parallel**. Starts after Track 4 completes.
 Phases in this track run **in parallel**. Starts after Track 5 completes.
 
 ### Phase 7: Position Monitor & Exit Module (agents: 2)
-- [ ] **7.1** Create `src/position_monitor.py` — monitor loop every 30s: for each open position get mark_price, run trailing stop update, check trailing stop trigger, check time-stop (>=72h), check profit-taking tiers, check trader liquidation/disappearance
-- [ ] **7.2** Implement trailing stop logic: `update_trailing_stop(pos, mark_price)` — Long: update highest_price and raise trailing_stop if new_trail > current; Short: update lowest_price and lower trailing_stop if new_trail < current. `trailing_stop_triggered(pos, mark_price)` — Long: mark<=trail, Short: mark>=trail
-- [ ] **7.3** Implement trader liquidation detection: `check_trader_position(our_pos)` — fetch trader positions, if position gone AND no recent Close trade found → close our position with reason TRADER_LIQUIDATED, blacklist trader for LIQUIDATION_COOLDOWN_DAYS=14
-- [ ] **7.4** Define profit-taking tier placeholders in config: TIER_1=10% (take 25%), TIER_2=20% (take 33%), TIER_3=40% (take 50%). Set to None/0 to disable
-- [ ] **7.5** Implement `close_position(pos, reason)` — market order to close, cancel existing stop orders on exchange, update DB status to 'closed', log reason
+- [x] **7.1** Create `src/position_monitor.py` — monitor loop every 30s: for each open position get mark_price, run trailing stop update, check trailing stop trigger, check time-stop (>=72h), check profit-taking tiers, check trader liquidation/disappearance
+- [x] **7.2** Implement trailing stop logic: `update_trailing_stop(pos, mark_price)` — Long: update highest_price and raise trailing_stop if new_trail > current; Short: update lowest_price and lower trailing_stop if new_trail < current. `trailing_stop_triggered(pos, mark_price)` — Long: mark<=trail, Short: mark>=trail
+- [x] **7.3** Implement trader liquidation detection: `check_trader_position(our_pos)` — fetch trader positions, if position gone AND no recent Close trade found → close our position with reason TRADER_LIQUIDATED, blacklist trader for LIQUIDATION_COOLDOWN_DAYS=14
+- [x] **7.4** Define profit-taking tier placeholders in config: TIER_1=10% (take 25%), TIER_2=20% (take 33%), TIER_3=40% (take 50%). Set to None/0 to disable
+- [x] **7.5** Implement `close_position(pos, reason)` — market order to close, cancel existing stop orders on exchange, update DB status to 'closed', log reason
 
 ---
 
@@ -112,24 +112,24 @@ Phases in this track run **in parallel**. Starts after Track 5 completes.
 Phases in this track run **in parallel**. Starts after Track 6 completes.
 
 ### Phase 8: Main Orchestrator (agents: 1)
-- [ ] **8.1** Create `src/main.py` — init DB, NansenClient, HyperLiquidExecutor; launch concurrent loops via asyncio.gather (leaderboard_refresh daily, trade_ingestion 5min, deferred_signal_processor continuous, position_monitor 30s)
-- [ ] **8.2** Implement graceful shutdown — SIGINT/SIGTERM handler, cancel all asyncio tasks, close httpx connections, flush logs
-- [ ] **8.3** Add structured logging throughout with structlog — every signal decision, order placement, stop update, position close logged with full context for post-mortem
+- [x] **8.1** Create `src/main.py` — init DB, NansenClient, HyperLiquidExecutor; launch concurrent loops via asyncio.gather (leaderboard_refresh daily, trade_ingestion 5min, deferred_signal_processor continuous, position_monitor 30s)
+- [x] **8.2** Implement graceful shutdown — SIGINT/SIGTERM handler, cancel all asyncio tasks, close httpx connections, flush logs
+- [x] **8.3** Add structured logging throughout with structlog — every signal decision, order placement, stop update, position close logged with full context for post-mortem
 
 ### Phase 9: Backtest / Paper Trading Mode (agents: 2)
-- [ ] **9.1** Create `src/backtest.py` — Backtester class: fetch historical leaderboard, score traders, fetch all trades in date range, replay through signal pipeline chronologically, simulate execution with slippage, simulate stops using historical prices
-- [ ] **9.2** Implement slippage simulation: base rates (BTC 0.02%, ETH 0.03%, SOL 0.08%, default 0.15%) scaled by size_factor = 1 + (size_usd/100k)*0.5
-- [ ] **9.3** Create PaperExecutor — config flag PAPER_MODE replaces HyperLiquidExecutor; records in DB as if executed using current mark_price + simulated slippage
-- [ ] **9.4** Backtest metrics output: total return, max drawdown, Sharpe ratio, win rate, profit factor, avg trade duration, trade count, comparison of our exits vs copying trader exits
+- [x] **9.1** Create `src/backtest.py` — Backtester class: fetch historical leaderboard, score traders, fetch all trades in date range, replay through signal pipeline chronologically, simulate execution with slippage, simulate stops using historical prices
+- [x] **9.2** Implement slippage simulation: base rates (BTC 0.02%, ETH 0.03%, SOL 0.08%, default 0.15%) scaled by size_factor = 1 + (size_usd/100k)*0.5
+- [x] **9.3** Create PaperExecutor — config flag PAPER_MODE replaces HyperLiquidExecutor; records in DB as if executed using current mark_price + simulated slippage
+- [x] **9.4** Backtest metrics output: total return, max drawdown, Sharpe ratio, win rate, profit factor, avg trade duration, trade count, comparison of our exits vs copying trader exits
 
 ### Phase 10: Testing (agents: 3)
-- [ ] **10.1** Stop placement tests: `test_stop_price_long` (100→95), `test_stop_price_short` (100→105), `test_trailing_stop_updates_on_new_high` (115→trail 105.8), `test_trailing_stop_does_not_lower` (price drops but trail unchanged)
-- [ ] **10.2** Time-stop tests: `test_time_stop_triggers_after_72h` (73h→True), `test_time_stop_does_not_trigger_before_72h` (71h→False)
-- [ ] **10.3** Slippage gate tests: `test_slippage_gate_passes` ($100→$101.5=1.5%<2.0%), `test_slippage_gate_fails` ($100→$102.5=2.5%>2.0%)
-- [ ] **10.4** Tiered sizing tests: hot trader (roi 15%→100%→$10k), lukewarm (roi 5%→75%→$7.5k), cold (roi -2%→50%→$5k), leverage penalty (20x→0.2→$2k), max cap ($125k→$50k)
-- [ ] **10.5** Action filter tests: Open passes, Add within 2h passes, Add after 2h rejected, Reduce rejected, Close rejected as entry
-- [ ] **10.6** Liquidation detection test: position present→open, position disappears without Close→closed+blacklisted 14 days
-- [ ] **10.7** Integration test: end-to-end with mocked Nansen — score traders, inject Open trade, verify all gates pass, verify sizing, paper execute with stop, simulate price increase→trailing update, simulate reversal→trailing triggers close
+- [x] **10.1** Stop placement tests: `test_stop_price_long` (100→95), `test_stop_price_short` (100→105), `test_trailing_stop_updates_on_new_high` (115→trail 105.8), `test_trailing_stop_does_not_lower` (price drops but trail unchanged)
+- [x] **10.2** Time-stop tests: `test_time_stop_triggers_after_72h` (73h→True), `test_time_stop_does_not_trigger_before_72h` (71h→False)
+- [x] **10.3** Slippage gate tests: `test_slippage_gate_passes` ($100→$101.5=1.5%<2.0%), `test_slippage_gate_fails` ($100→$102.5=2.5%>2.0%)
+- [x] **10.4** Tiered sizing tests: hot trader (roi 15%→100%→$10k), lukewarm (roi 5%→75%→$7.5k), cold (roi -2%→50%→$5k), leverage penalty (20x→0.2→$2k), max cap ($125k→$50k)
+- [x] **10.5** Action filter tests: Open passes, Add within 2h passes, Add after 2h rejected, Reduce rejected, Close rejected as entry
+- [x] **10.6** Liquidation detection test: position present→open, position disappears without Close→closed+blacklisted 14 days
+- [x] **10.7** Integration test: end-to-end with mocked Nansen — score traders, inject Open trade, verify all gates pass, verify sizing, paper execute with stop, simulate price increase→trailing update, simulate reversal→trailing triggers close
 
 ---
 
