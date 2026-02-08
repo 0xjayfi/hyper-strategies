@@ -26,6 +26,9 @@ Phase 8 -> Phase 6
 Phase 0 (Track 1: Project Foundation) — completed.
 Phase 1 (Track 2: API Client Layer) — completed.
 Phase 2 (Track 3: Trader Intelligence) — completed.
+Phase 3 (Track 4: Core Consensus Logic) — completed.
+Phase 4 (Track 5: Signal Processing) — completed.
+Phase 5 (Track 6: Entry Execution) — completed.
 
 ---
 
@@ -69,12 +72,12 @@ Phases in this track run **in parallel**. Starts after Track 2 completes.
 
 Phases in this track run **in parallel**. Starts after Track 3 completes.
 
-### Phase 3: Consensus Engine (agents: 2)
-- [ ] Implement `consensus_engine.py`: `compute_token_consensus(token, positions, traders, config, now) -> TokenConsensus` and `compute_all_tokens_consensus(positions_by_token, traders, config) -> dict[str, TokenConsensus]`
-- [ ] Implement freshness decay: `e^(-hours / FRESHNESS_HALF_LIFE_HOURS)`
-- [ ] Implement cluster-aware counting (one vote per cluster_id)
-- [ ] Implement size threshold filtering per token
-- [ ] Write unit tests: 3 traders long BTC with 2:1 volume ratio → STRONG_LONG; 2 long 2 short → MIXED; 3 traders in same cluster → NOT strong; stale positions with freshness decay → MIXED; position weight < 10% → filtered out
+### Phase 3: Consensus Engine (agents: 2) ✓
+- [x] Implement `consensus_engine.py`: `compute_token_consensus(token, positions, traders, config, now) -> TokenConsensus` and `compute_all_tokens_consensus(positions_by_token, traders, config) -> dict[str, TokenConsensus]`
+- [x] Implement freshness decay: `e^(-hours / FRESHNESS_HALF_LIFE_HOURS)`
+- [x] Implement cluster-aware counting (one vote per cluster_id)
+- [x] Implement size threshold filtering per token
+- [x] Write unit tests: 3 traders long BTC with 2:1 volume ratio → STRONG_LONG; 2 long 2 short → MIXED; 3 traders in same cluster → NOT strong; stale positions with freshness decay → MIXED; position weight < 10% → filtered out
 
 ---
 
@@ -82,10 +85,10 @@ Phases in this track run **in parallel**. Starts after Track 3 completes.
 
 Phases in this track run **in parallel**. Starts after Track 4 completes.
 
-### Phase 4: Signal Gate + Confirmation Window (agents: 2)
-- [ ] Implement `signal_gate.py`: `process_consensus_change(token, consensus, current_price, config, now) -> PendingSignal | None` with `pending_signals` dict management, `COPY_DELAY_MINUTES` wait enforcement, `MAX_PRICE_SLIPPAGE_PERCENT` gate
-- [ ] Implement Hyperliquid price feed in `hl_client.py`: WebSocket subscription to `allMids`, fallback REST polling, stale price detection (>30s)
-- [ ] Write unit tests: signal confirmed after 15 min with <2% slippage → entry; price moves >2% during window → rejected; consensus breaks during window → cancelled; re-checked at 14 min → still pending
+### Phase 4: Signal Gate + Confirmation Window (agents: 2) ✓
+- [x] Implement `signal_gate.py`: `process_consensus_change(token, consensus, current_price, config, now) -> PendingSignal | None` with `pending_signals` dict management, `COPY_DELAY_MINUTES` wait enforcement, `MAX_PRICE_SLIPPAGE_PERCENT` gate
+- [x] Implement Hyperliquid price feed in `hl_client.py`: WebSocket subscription to `allMids`, fallback REST polling, stale price detection (>30s)
+- [x] Write unit tests: signal confirmed after 15 min with <2% slippage → entry; price moves >2% during window → rejected; consensus breaks during window → cancelled; re-checked at 14 min → still pending
 
 ---
 
@@ -93,10 +96,10 @@ Phases in this track run **in parallel**. Starts after Track 4 completes.
 
 Phases in this track run **in parallel**. Starts after Track 5 completes.
 
-### Phase 5: Entry Sizing + Risk Caps (agents: 2)
-- [ ] Implement `sizing.py`: `calculate_entry_size(token, side, consensus, account_value, positions, config) -> float | None`, `select_leverage(avg_trader_leverage, config) -> int`, `select_order_type(action, signal_age, current_price, trader_entry, token) -> tuple`
-- [ ] Implement all cap checks: single position cap, total exposure cap, token exposure cap, directional (long/short) exposure cap, position count cap
-- [ ] Write unit tests: entry at $10K with $100K account → allowed; 6th position attempt → blocked (MAX_TOTAL_POSITIONS=5); token already at 14% exposure → capped to 1%; leverage 20x from trader → capped to 5x
+### Phase 5: Entry Sizing + Risk Caps (agents: 2) ✓
+- [x] Implement `sizing.py`: `calculate_entry_size(token, side, consensus, account_value, positions, config) -> float | None`, `select_leverage(avg_trader_leverage, config) -> int`, `select_order_type(action, signal_age, current_price, trader_entry, token) -> tuple`
+- [x] Implement all cap checks: single position cap, total exposure cap, token exposure cap, directional (long/short) exposure cap, position count cap
+- [x] Write unit tests: entry at $10K with $100K account → allowed; 6th position attempt → blocked (MAX_TOTAL_POSITIONS=5); token already at 14% exposure → capped to 1%; leverage 20x from trader → capped to 5x
 
 ---
 

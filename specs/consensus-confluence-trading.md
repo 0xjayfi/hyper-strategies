@@ -945,13 +945,13 @@ When multiple exit conditions trigger simultaneously, use this priority:
 ### Phase 3 — Consensus Engine
 **Depends on:** Phase 2
 
-- [ ] Implement `consensus_engine.py`:
+- [x] Implement `consensus_engine.py`:
   - `compute_token_consensus(token, positions, traders, config, now) -> TokenConsensus`
   - `compute_all_tokens_consensus(positions_by_token, traders, config) -> dict[str, TokenConsensus]`
-- [ ] Implement freshness decay: `e^(-hours / FRESHNESS_HALF_LIFE_HOURS)`
-- [ ] Implement cluster-aware counting (one vote per cluster_id)
-- [ ] Implement size threshold filtering per token
-- [ ] Write unit tests:
+- [x] Implement freshness decay: `e^(-hours / FRESHNESS_HALF_LIFE_HOURS)`
+- [x] Implement cluster-aware counting (one vote per cluster_id)
+- [x] Implement size threshold filtering per token
+- [x] Write unit tests:
   - 3 traders long BTC with 2:1 volume ratio → STRONG_LONG
   - 2 traders long, 2 short → MIXED
   - 3 traders long but in same cluster → NOT strong (only 1 cluster)
@@ -961,16 +961,16 @@ When multiple exit conditions trigger simultaneously, use this priority:
 ### Phase 4 — Signal Gate + Confirmation Window
 **Depends on:** Phase 3
 
-- [ ] Implement `signal_gate.py`:
+- [x] Implement `signal_gate.py`:
   - `process_consensus_change(token, consensus, current_price, config, now) -> PendingSignal | None`
   - Manages `pending_signals` dict
   - Enforces `COPY_DELAY_MINUTES` wait
   - Enforces `MAX_PRICE_SLIPPAGE_PERCENT` gate
-- [ ] Implement Hyperliquid price feed in `hl_client.py`:
+- [x] Implement Hyperliquid price feed in `hl_client.py`:
   - WebSocket subscription to `allMids`
   - Fallback REST polling
   - Stale price detection (>30s)
-- [ ] Write unit tests:
+- [x] Write unit tests:
   - Signal created, confirmed after 15 min with <2% slippage → entry
   - Signal created, price moves >2% during window → rejected
   - Signal created, consensus breaks during window → cancelled
@@ -979,17 +979,17 @@ When multiple exit conditions trigger simultaneously, use this priority:
 ### Phase 5 — Entry Sizing + Risk Caps
 **Depends on:** Phase 4
 
-- [ ] Implement `sizing.py`:
+- [x] Implement `sizing.py`:
   - `calculate_entry_size(token, side, consensus, account_value, positions, config) -> float | None`
   - `select_leverage(avg_trader_leverage, config) -> int`
   - `select_order_type(action, signal_age, current_price, trader_entry, token) -> tuple`
-- [ ] Implement all cap checks:
+- [x] Implement all cap checks:
   - Single position cap
   - Total exposure cap
   - Token exposure cap
   - Directional (long/short) exposure cap
   - Position count cap
-- [ ] Write unit tests:
+- [x] Write unit tests:
   - Entry at $10K with $100K account → allowed
   - 6th position attempt → blocked (MAX_TOTAL_POSITIONS=5)
   - Token already at 14% exposure → capped to 1%
