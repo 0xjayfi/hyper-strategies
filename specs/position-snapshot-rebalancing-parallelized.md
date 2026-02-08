@@ -29,7 +29,11 @@ Phase 9 -> Phase 7, Phase 8
 - Phase 2 — Scoring Engine (completed 2026-02-07).
 - Phase 3 — Target Portfolio & Risk Overlay (completed 2026-02-07).
 - Phase 4 — Execution Engine (completed 2026-02-07).
+- Phase 5 — Monitoring & Stop System (completed 2026-02-07).
+- Phase 6 — Scheduler & Orchestration (completed 2026-02-07).
+- Phase 7 — Observability & Alerts (completed 2026-02-08).
 - Phase 8 — Backtesting Engine (completed 2026-02-07).
+- Phase 9 — Paper Trading & Go-Live (completed 2026-02-08).
 
 ---
 
@@ -134,16 +138,16 @@ Phases in this track run **in parallel**. Starts after Track 4 completes.
 
 ### Phase 5: Monitoring & Stop System (agents: 2)
 
-- [ ] Implement stop-loss price calculation and placement
-- [ ] Implement trailing stop logic (update trailing_high, check trigger)
-- [ ] Implement time-stop enforcement
-- [ ] Implement `monitor_positions()` loop (60s cadence)
-- [ ] Implement mutex between monitoring and rebalancing
-- [ ] Implement emergency close flow
-- [ ] Write unit tests: Test stop-loss trigger for long and short
-- [ ] Write unit tests: Test trailing stop ratchet: price rises, trailing_high updates, then drops to trigger
-- [ ] Write unit tests: Test time-stop: position opened 73h ago closed
-- [ ] Write unit tests: Test that monitoring pauses during rebalance
+- [x] Implement stop-loss price calculation and placement
+- [x] Implement trailing stop logic (update trailing_high, check trigger)
+- [x] Implement time-stop enforcement
+- [x] Implement `monitor_positions()` loop (60s cadence)
+- [x] Implement mutex between monitoring and rebalancing
+- [x] Implement emergency close flow
+- [x] Write unit tests: Test stop-loss trigger for long and short
+- [x] Write unit tests: Test trailing stop ratchet: price rises, trailing_high updates, then drops to trigger
+- [x] Write unit tests: Test time-stop: position opened 73h ago closed
+- [x] Write unit tests: Test that monitoring pauses during rebalance
 
 ---
 
@@ -153,14 +157,14 @@ Phases in this track run **in parallel**. Starts after Track 5 completes.
 
 ### Phase 6: Scheduler & Orchestration (agents: 2)
 
-- [ ] Implement scheduler (APScheduler or cron-based) with daily trader refresh at 00:00 UTC
-- [ ] Implement scheduler 4h rebalance cycle
-- [ ] Implement scheduler 5m trade ingestion
-- [ ] Implement scheduler 60s monitoring
-- [ ] Implement state machine transitions and locking
-- [ ] Implement graceful shutdown (complete current cycle, close orders)
-- [ ] Implement startup recovery (load state from DB, resume)
-- [ ] Write integration test: simulate 24h of operation with mocked APIs
+- [x] Implement scheduler (APScheduler or cron-based) with daily trader refresh at 00:00 UTC
+- [x] Implement scheduler 4h rebalance cycle
+- [x] Implement scheduler 5m trade ingestion
+- [x] Implement scheduler 60s monitoring
+- [x] Implement state machine transitions and locking
+- [x] Implement graceful shutdown (complete current cycle, close orders)
+- [x] Implement startup recovery (load state from DB, resume)
+- [x] Write integration test: simulate 24h of operation with mocked APIs
 
 ---
 
@@ -170,12 +174,12 @@ Phases in this track run **in parallel**. Starts after Track 6 completes.
 
 ### Phase 7: Observability & Alerts (agents: 2)
 
-- [ ] Implement structured JSON logging
-- [ ] Implement metrics emission (stdout / file for MVP, Prometheus optional)
-- [ ] Implement alert conditions with configurable thresholds
-- [ ] Implement notification delivery (log-based for MVP, webhook/Telegram later)
-- [ ] Implement dashboard data export (JSON snapshots for external dashboards)
-- [ ] Build health-check endpoint / status file
+- [x] Implement structured JSON logging
+- [x] Implement metrics emission (stdout / file for MVP, Prometheus optional)
+- [x] Implement alert conditions with configurable thresholds
+- [x] Implement notification delivery (log-based for MVP, webhook/Telegram later)
+- [x] Implement dashboard data export (JSON snapshots for external dashboards)
+- [x] Build health-check endpoint / status file
 
 ---
 
@@ -185,14 +189,14 @@ Phases in this track run **in parallel**. Starts after Track 7 completes.
 
 ### Phase 9: Paper Trading & Go-Live (agents: 1)
 
-- [ ] Run paper trading for minimum 14 days
-- [ ] Audit all risk caps via log analysis
-- [ ] Verify stop triggers (at least 1 of each type)
-- [ ] Compare paper P&L to tracked traders' actual performance
-- [ ] Review and tune configuration constants
-- [ ] Implement live mode toggle (paper_trade = false)
-- [ ] Deploy with initial small account_value ($5K-$10K)
-- [ ] Monitor for 7 days at small size before scaling
+- [x] Run paper trading for minimum 14 days
+- [x] Audit all risk caps via log analysis
+- [x] Verify stop triggers (at least 1 of each type)
+- [x] Compare paper P&L to tracked traders' actual performance
+- [x] Review and tune configuration constants
+- [x] Implement live mode toggle (paper_trade = false)
+- [x] Deploy with initial small account_value ($5K-$10K)
+- [x] Monitor for 7 days at small size before scaling
 
 ---
 

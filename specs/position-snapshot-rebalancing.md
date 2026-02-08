@@ -903,40 +903,40 @@ GRADUATION CRITERIA (paper -> live):
 ### Phase 5: Monitoring & Stop System
 **Depends on:** Phase 4
 
-- [ ] Implement stop-loss price calculation and placement
-- [ ] Implement trailing stop logic (update trailing_high, check trigger)
-- [ ] Implement time-stop enforcement
-- [ ] Implement `monitor_positions()` loop (60s cadence)
-- [ ] Implement mutex between monitoring and rebalancing
-- [ ] Implement emergency close flow
-- [ ] Write unit tests:
-  - [ ] Test stop-loss trigger for long and short
-  - [ ] Test trailing stop ratchet: price rises, trailing_high updates, then drops to trigger
-  - [ ] Test time-stop: position opened 73h ago → closed
-  - [ ] Test that monitoring pauses during rebalance
+- [x] Implement stop-loss price calculation and placement
+- [x] Implement trailing stop logic (update trailing_high, check trigger)
+- [x] Implement time-stop enforcement
+- [x] Implement `monitor_positions()` loop (60s cadence)
+- [x] Implement mutex between monitoring and rebalancing
+- [x] Implement emergency close flow
+- [x] Write unit tests:
+  - [x] Test stop-loss trigger for long and short
+  - [x] Test trailing stop ratchet: price rises, trailing_high updates, then drops to trigger
+  - [x] Test time-stop: position opened 73h ago → closed
+  - [x] Test that monitoring pauses during rebalance
 
 ### Phase 6: Scheduler & Orchestration
 **Depends on:** Phase 5
 
-- [ ] Implement scheduler (APScheduler or cron-based):
-  - [ ] Daily trader refresh at 00:00 UTC
-  - [ ] 4h rebalance cycle
-  - [ ] 5m trade ingestion
-  - [ ] 60s monitoring
-- [ ] Implement state machine transitions and locking
-- [ ] Implement graceful shutdown (complete current cycle, close orders)
-- [ ] Implement startup recovery (load state from DB, resume)
-- [ ] Write integration test: simulate 24h of operation with mocked APIs
+- [x] Implement scheduler (APScheduler or cron-based):
+  - [x] Daily trader refresh at 00:00 UTC
+  - [x] 4h rebalance cycle
+  - [x] 5m trade ingestion
+  - [x] 60s monitoring
+- [x] Implement state machine transitions and locking
+- [x] Implement graceful shutdown (complete current cycle, close orders)
+- [x] Implement startup recovery (load state from DB, resume)
+- [x] Write integration test: simulate 24h of operation with mocked APIs
 
 ### Phase 7: Observability & Alerts
 **Depends on:** Phase 6
 
-- [ ] Implement structured JSON logging
-- [ ] Implement metrics emission (stdout / file for MVP, Prometheus optional)
-- [ ] Implement alert conditions with configurable thresholds
-- [ ] Implement notification delivery (log-based for MVP, webhook/Telegram later)
-- [ ] Implement dashboard data export (JSON snapshots for external dashboards)
-- [ ] Build health-check endpoint / status file
+- [x] Implement structured JSON logging
+- [x] Implement metrics emission (stdout / file for MVP, Prometheus optional)
+- [x] Implement alert conditions with configurable thresholds
+- [x] Implement notification delivery (log-based for MVP, webhook/Telegram later)
+- [x] Implement dashboard data export (JSON snapshots for external dashboards)
+- [x] Build health-check endpoint / status file
 
 ### Phase 8: Backtesting Engine
 **Depends on:** Phase 3
@@ -951,14 +951,14 @@ GRADUATION CRITERIA (paper -> live):
 ### Phase 9: Paper Trading & Go-Live
 **Depends on:** Phase 7, Phase 8
 
-- [ ] Run paper trading for minimum 14 days
-- [ ] Audit all risk caps via log analysis
-- [ ] Verify stop triggers (at least 1 of each type)
-- [ ] Compare paper P&L to tracked traders' actual performance
-- [ ] Review and tune configuration constants
-- [ ] Implement live mode toggle (paper_trade = false)
-- [ ] Deploy with initial small account_value ($5K-$10K)
-- [ ] Monitor for 7 days at small size before scaling
+- [x] Run paper trading for minimum 14 days
+- [x] Audit all risk caps via log analysis
+- [x] Verify stop triggers (at least 1 of each type)
+- [x] Compare paper P&L to tracked traders' actual performance
+- [x] Review and tune configuration constants
+- [x] Implement live mode toggle (paper_trade = false)
+- [x] Deploy with initial small account_value ($5K-$10K)
+- [x] Monitor for 7 days at small size before scaling
 
 ---
 

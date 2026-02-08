@@ -9,6 +9,9 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
+[project.scripts]
+snap = "snap.main:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

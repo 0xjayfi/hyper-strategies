@@ -95,3 +95,24 @@ SLIPPAGE_BPS: dict[str, int] = {
     "HYPE": 20,
     "DEFAULT": 15,
 }
+
+# ===========================================================================
+# Observability & Alerts (Phase 7)
+# ===========================================================================
+DRAWDOWN_WARNING_PCT: float = 8.0
+DRAWDOWN_CRITICAL_PCT: float = 15.0
+EXPOSURE_BREACH_PCT: float = 55.0  # warn above 55% of account
+REBALANCE_STALE_HOURS: float = 6.0
+DIVERGENCE_WARNING_PCT: float = 25.0
+FILL_RATE_WARNING_PCT: float = 95.0
+API_CONSECUTIVE_FAILURES: int = 3
+HEALTH_CHECK_FILE: str = os.environ.get("SNAP_HEALTH_FILE", "/tmp/snap_health.json")
+
+# ===========================================================================
+# Paper Trade / Live Mode (Phase 9)
+# ===========================================================================
+PAPER_TRADE: bool = os.environ.get("SNAP_PAPER_TRADE", "true").lower() in ("true", "1", "yes")
+DB_PATH: str = os.environ.get("SNAP_DB_PATH", "snap.db")
+ACCOUNT_VALUE: float = float(os.environ.get("SNAP_ACCOUNT_VALUE", "10000"))
+LOG_FILE: str | None = os.environ.get("SNAP_LOG_FILE")
+DASHBOARD_FILE: str | None = os.environ.get("SNAP_DASHBOARD_FILE")
