@@ -78,3 +78,19 @@ REBALANCE_COOLDOWN_HOURS = 24
 LEADERBOARD_REFRESH_CRON = "0 0 * * *"  # Daily midnight UTC
 METRICS_RECOMPUTE_HOURS = 6
 POSITION_MONITOR_MINUTES = 15
+
+# ---------------------------------------------------------------------------
+# Nansen API rate limiting (per endpoint type)
+# ---------------------------------------------------------------------------
+
+# Leaderboard endpoints — slow server responses (~1-2s/page), no 429 risk
+NANSEN_RATE_LIMIT_LEADERBOARD_PER_SECOND: int = 20
+NANSEN_RATE_LIMIT_LEADERBOARD_PER_MINUTE: int = 300
+NANSEN_RATE_LIMIT_LEADERBOARD_MIN_INTERVAL: float = 0.0
+NANSEN_RATE_LIMIT_LEADERBOARD_STATE_FILE: str = "/tmp/pnl_weighted_rate_leaderboard.json"
+
+# Profiler endpoints (perp-trades, perp-positions) — fast responses, 429 risk
+NANSEN_RATE_LIMIT_PROFILER_PER_SECOND: int = 1
+NANSEN_RATE_LIMIT_PROFILER_PER_MINUTE: int = 9
+NANSEN_RATE_LIMIT_PROFILER_MIN_INTERVAL: float = 7.0
+NANSEN_RATE_LIMIT_PROFILER_STATE_FILE: str = "/tmp/pnl_weighted_rate_profiler.json"
