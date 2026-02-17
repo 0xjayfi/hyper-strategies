@@ -8,10 +8,11 @@ Computes trade-derived metrics for each trader over rolling windows:
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
+from src.config import METRICS_RECOMPUTE_HOURS
 from src.models import Trade, TradeMetrics
 from src.nansen_client import NansenClient
 from src.datastore import DataStore
@@ -62,9 +63,14 @@ def compute_trade_metrics(trades: list[Trade], account_value: float, window_days
     # ROI proxy: total realized PnL / account value at start of window
     roi_proxy = (total_pnl / account_value * 100) if account_value > 0 else 0.0
 
-    # Drawdown proxy: worst single-trade loss as % of account
-    worst_loss = min((t.closed_pnl for t in close_trades), default=0)
-    max_drawdown_proxy = abs(worst_loss) / account_value if account_value > 0 else 0.0
+    # Drawdown proxy: worst single-trade loss as % of trade value (trade-relative)
+    worst_trade_dd = 0.0
+    for t in close_trades:
+        if t.closed_pnl < 0 and t.value_usd > 0:
+            dd = abs(t.closed_pnl) / t.value_usd
+            if dd > worst_trade_dd:
+                worst_trade_dd = dd
+    max_drawdown_proxy = worst_trade_dd
 
     return TradeMetrics(
         window_days=window_days,
@@ -108,7 +114,29 @@ async def recompute_all_metrics(
 
     logger.info(f"Recomputing metrics for {len(trader_addresses)} traders across windows: {windows}")
 
+    cache_max_age = timedelta(hours=METRICS_RECOMPUTE_HOURS)
+    now = datetime.now(timezone.utc)
+
     for address in trader_addresses:
+        # Cache check: skip if all windows have fresh metrics
+        all_fresh = True
+        for w in windows:
+            row = datastore._conn.execute(
+                "SELECT computed_at FROM trade_metrics WHERE address = ? AND window_days = ? ORDER BY computed_at DESC LIMIT 1",
+                (address, w),
+            ).fetchone()
+            if row is None:
+                all_fresh = False
+                break
+            computed_at = datetime.fromisoformat(row["computed_at"]).replace(tzinfo=timezone.utc)
+            if now - computed_at > cache_max_age:
+                all_fresh = False
+                break
+
+        if all_fresh:
+            logger.info(f"Skipping trader {address} — metrics fresh (< {METRICS_RECOMPUTE_HOURS}h old)")
+            continue
+
         logger.info(f"Processing trader: {address}")
 
         # Fetch account value once per trader
@@ -128,11 +156,12 @@ async def recompute_all_metrics(
             date_from = (datetime.utcnow() - timedelta(days=window_days)).strftime("%Y-%m-%d")
 
             try:
-                # Fetch trades for this window
+                # Fetch trades for this window (newest first so page cap gets recent trades)
                 trades = await nansen_client.fetch_address_trades(
                     address=address,
                     date_from=date_from,
                     date_to=date_to,
+                    order_by=[{"field": "timestamp", "direction": "DESC"}],
                 )
 
                 # Compute metrics

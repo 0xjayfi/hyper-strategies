@@ -47,8 +47,8 @@ STYLE_MULTIPLIERS = {
 
 
 def normalized_roi(roi: float) -> float:
-    """Scale ROI to [0, 1].  Cap at 100%."""
-    return min(1.0, max(0.0, roi / 100.0))
+    """Scale ROI to [0, 1].  10%+ ROI maps to 1.0 (realistic for perp traders)."""
+    return min(1.0, max(0.0, roi / 10.0))
 
 
 # ---------------------------------------------------------------------------
@@ -67,10 +67,10 @@ def normalized_sharpe(pseudo_sharpe: float) -> float:
 
 
 def normalized_win_rate(win_rate: float) -> float:
-    """Scale win rate to [0, 1].  Apply floor at 0.35 and ceiling at 0.85."""
-    if win_rate < 0.35 or win_rate > 0.85:
+    """Scale win rate to [0, 1].  Apply floor at 0.25 and ceiling at 0.75."""
+    if win_rate < 0.25 or win_rate > 0.90:
         return 0.0
-    return (win_rate - 0.35) / (0.85 - 0.35)
+    return min(1.0, (win_rate - 0.25) / (0.75 - 0.25))
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +143,7 @@ def risk_management_score(
 
 def classify_trader_style(trades_per_day: float, avg_hold_hours: float) -> str:
     """Classify a trader as HFT, SWING, or POSITION."""
-    if trades_per_day > 5 and avg_hold_hours < 4:
+    if trades_per_day > 100 and avg_hold_hours < 1:
         return "HFT"
     elif trades_per_day >= 0.3 and avg_hold_hours < 336:
         return "SWING"

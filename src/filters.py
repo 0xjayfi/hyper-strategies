@@ -12,10 +12,11 @@ from datetime import datetime, timedelta
 
 from src.models import TradeMetrics
 from src.datastore import DataStore
+from src import config
 
 logger = logging.getLogger(__name__)
 
-LIQUIDATION_COOLDOWN_DAYS = 14
+LIQUIDATION_COOLDOWN_DAYS = config.LIQUIDATION_COOLDOWN_DAYS
 
 
 # ---------------------------------------------------------------------------
@@ -36,20 +37,28 @@ def apply_anti_luck_filter(
         ``(passes, reason_if_failed)``.  When the trader passes all gates
         the reason is ``"passed"``.
     """
-    # Multi-timeframe profitability gates
-    if not (m7.total_pnl > 0 and m7.roi_proxy > 5):
+    # Multi-timeframe profitability gates (from config)
+    g7 = config.ANTI_LUCK_7D
+    g30 = config.ANTI_LUCK_30D
+    g90 = config.ANTI_LUCK_90D
+    wr_lo, wr_hi = config.WIN_RATE_BOUNDS
+    min_pf = config.MIN_PROFIT_FACTOR
+    trend_pf = config.TREND_TRADER_PF
+    min_trades = config.MIN_TRADES_30D
+
+    if not (m7.total_pnl > g7["min_pnl"] and m7.roi_proxy > g7["min_roi"]):
         return False, f"7d gate: pnl={m7.total_pnl:.0f}, roi={m7.roi_proxy:.1f}%"
-    if not (m30.total_pnl > 10_000 and m30.roi_proxy > 15):
+    if not (m30.total_pnl > g30["min_pnl"] and m30.roi_proxy > g30["min_roi"]):
         return False, f"30d gate: pnl={m30.total_pnl:.0f}, roi={m30.roi_proxy:.1f}%"
-    if not (m90.total_pnl > 50_000 and m90.roi_proxy > 30):
+    if not (m90.total_pnl > g90["min_pnl"] and m90.roi_proxy > g90["min_roi"]):
         return False, f"90d gate: pnl={m90.total_pnl:.0f}, roi={m90.roi_proxy:.1f}%"
 
     # Win rate bounds
-    if m30.win_rate > 0.85:
+    if m30.win_rate > wr_hi:
         return False, f"Win rate too high: {m30.win_rate:.2f} (possible manipulation)"
-    if m30.win_rate < 0.35:
+    if m30.win_rate < wr_lo:
         # Allow trend trader exception: low win rate but high profit factor
-        if m30.profit_factor < 2.5:
+        if m30.profit_factor < trend_pf:
             return False, (
                 f"Win rate {m30.win_rate:.2f} with PF {m30.profit_factor:.1f} "
                 f"(not trend trader)"
@@ -57,14 +66,14 @@ def apply_anti_luck_filter(
         # Trend trader passes
 
     # Profit factor gate
-    if m30.profit_factor < 1.5:
-        # Trend trader variant: win<40% but PF>2.5 is OK (already handled above)
-        if not (m30.win_rate < 0.40 and m30.profit_factor > 2.5):
-            return False, f"Profit factor {m30.profit_factor:.2f} < 1.5"
+    if m30.profit_factor < min_pf:
+        # Trend trader variant: win<40% but PF>trend_pf is OK (already handled above)
+        if not (m30.win_rate < 0.40 and m30.profit_factor > trend_pf):
+            return False, f"Profit factor {m30.profit_factor:.2f} < {min_pf}"
 
     # Minimum trade count for statistical significance
-    if m30.total_trades < 20:
-        return False, f"Insufficient trades: {m30.total_trades} < 20"
+    if m30.total_trades < min_trades:
+        return False, f"Insufficient trades: {m30.total_trades} < {min_trades}"
 
     return True, "passed"
 

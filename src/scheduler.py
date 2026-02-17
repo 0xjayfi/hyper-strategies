@@ -39,14 +39,18 @@ async def refresh_leaderboard(nansen_client: NansenClient, datastore: DataStore)
     """
     logger.info("Starting leaderboard refresh")
 
-    # Fetch 30-day window
-    date_to = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Fetch 30-day window — API requires YYYY-MM-DD (no time component)
+    date_to = datetime.now(timezone.utc).date()
     date_from = date_to - timedelta(days=30)
+
+    date_from_str = date_from.isoformat()  # "2026-01-14"
+    date_to_str = date_to.isoformat()      # "2026-02-13"
 
     try:
         entries = await nansen_client.fetch_leaderboard(
-            date_from=date_from.isoformat(),
-            date_to=date_to.isoformat()
+            date_from=date_from_str,
+            date_to=date_to_str,
+            pagination={"page": 1, "per_page": 50}
         )
 
         count = 0
@@ -60,8 +64,8 @@ async def refresh_leaderboard(nansen_client: NansenClient, datastore: DataStore)
             # Insert snapshot
             datastore.insert_leaderboard_snapshot(
                 address=entry.trader_address,
-                date_from=date_from.isoformat(),
-                date_to=date_to.isoformat(),
+                date_from=date_from_str,
+                date_to=date_to_str,
                 total_pnl=entry.total_pnl,
                 roi=entry.roi,
                 account_value=entry.account_value
@@ -138,9 +142,11 @@ async def full_recompute_cycle(
             if last_trade_time_str:
                 try:
                     last_trade_time = datetime.fromisoformat(last_trade_time_str)
+                    if last_trade_time.tzinfo is None:
+                        last_trade_time = last_trade_time.replace(tzinfo=timezone.utc)
                     hours_since = (datetime.now(timezone.utc) - last_trade_time).total_seconds() / 3600
-                except (ValueError, TypeError):
-                    logger.warning(f"Invalid last_trade_time for {address}: {last_trade_time_str}")
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid last_trade_time for {address}: {last_trade_time_str} ({e})")
                     hours_since = 9999  # Default to very old
             else:
                 hours_since = 9999  # No trades on record
@@ -164,10 +170,10 @@ async def full_recompute_cycle(
             # Add to eligible list if passed
             if is_eligible:
                 eligible_traders.append(address)
-                scores[address] = score_dict["final_score"]
+                scores[address] = score_dict
                 logger.debug(f"Trader {address} eligible with score {score_dict['final_score']:.4f}")
             else:
-                logger.debug(f"Trader {address} filtered: {reason}")
+                logger.info(f"Trader {address} filtered: {reason}")
 
         logger.info(f"Found {len(eligible_traders)} eligible traders out of {len(traders)}")
 

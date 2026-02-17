@@ -39,13 +39,13 @@ ROI_TIER_MEDIUM = 0   # 0-10% -> 0.75x
 # Anti-luck gates (Phase 5)
 # ---------------------------------------------------------------------------
 
-ANTI_LUCK_7D = {"min_pnl": 0, "min_roi": 5}
-ANTI_LUCK_30D = {"min_pnl": 10_000, "min_roi": 15}
-ANTI_LUCK_90D = {"min_pnl": 50_000, "min_roi": 30}
-WIN_RATE_BOUNDS = (0.35, 0.85)
-MIN_PROFIT_FACTOR = 1.5
-TREND_TRADER_PF = 2.5
-MIN_TRADES_30D = 20
+ANTI_LUCK_7D = {"min_pnl": -999_999, "min_roi": -999}
+ANTI_LUCK_30D = {"min_pnl": 500, "min_roi": 0}
+ANTI_LUCK_90D = {"min_pnl": 1_000, "min_roi": 0}
+WIN_RATE_BOUNDS = (0.25, 0.90)
+MIN_PROFIT_FACTOR = 1.1
+TREND_TRADER_PF = 2.0
+MIN_TRADES_30D = 10
 
 # ---------------------------------------------------------------------------
 # Blacklist

@@ -593,11 +593,12 @@ class NansenClient:
             data = await self._request("/api/v1/profiler/perp-trades", base_payload)
             return [Trade.model_validate(item) for item in data["data"]]
 
-        # Auto-paginate: fetch all pages.
+        # Auto-paginate: fetch up to max_pages pages.
+        max_pages = 10
         all_trades: list[Trade] = []
         page = 1
 
-        while True:
+        while page <= max_pages:
             page_payload = {
                 **base_payload,
                 "pagination": {"page": page, "per_page": _AUTO_PAGE_SIZE},
