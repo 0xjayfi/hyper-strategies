@@ -26,7 +26,8 @@ src/snap/
   scheduler.py       # Async tick-based scheduler with state machine and graceful shutdown
   observability.py   # Structured JSON logging, metrics, alerts, dashboard export
   audit.py           # Graduation verification (risk cap audit, stop trigger checks)
-  main.py            # CLI entry point
+  tui.py             # Terminal UI display (rich tables for portfolio, scores, status)
+  main.py            # CLI entry point with interactive command loop
 ```
 
 ## Setup
@@ -59,6 +60,17 @@ snap --db-path ./data/snap.db --account-value 10000
 snap --live --account-value 5000
 ```
 
+On launch, Snap displays a status bar and portfolio summary. The scheduler runs automatically in the background while you interact via keyboard commands:
+
+| Key | Action |
+|-----|--------|
+| `r` | Refresh trader universe (fetch leaderboard, score, rank) |
+| `b` | Run rebalance cycle (snapshot, target, risk overlay, execute) |
+| `m` | Run monitor pass (check stops on all positions) |
+| `s` | Show trader scores table (top 15 by composite score) |
+| `p` | Show portfolio table (positions, PnL, leverage, margin) |
+| `q` | Graceful shutdown (also responds to Ctrl+C / SIGTERM) |
+
 ### Environment Variables
 
 | Variable | Default | Description |
@@ -90,7 +102,7 @@ snap --live --account-value 5000
 pytest
 ```
 
-306 tests covering all modules with `respx` for HTTP mocking and `tmp_path` for DB isolation.
+~340 tests covering all modules with `respx` for HTTP mocking and `tmp_path` for DB isolation.
 
 ## Data Sources
 

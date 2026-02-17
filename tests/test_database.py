@@ -207,3 +207,19 @@ def test_memory_database():
     conn.close()
 
     assert table_names == EXPECTED_TABLES
+
+
+def test_our_positions_has_leverage_column(tmp_path):
+    """The our_positions table has a leverage column with default 5.0."""
+    db_path = str(tmp_path / "test.db")
+    conn = init_db(db_path)
+
+    cursor = conn.execute("PRAGMA table_info(our_positions);")
+    columns = {row[1]: row for row in cursor.fetchall()}
+    conn.close()
+
+    assert "leverage" in columns
+    # Column info: (cid, name, type, notnull, dflt_value, pk)
+    lev_col = columns["leverage"]
+    assert lev_col[2] == "REAL"  # type
+    assert lev_col[4] == "5.0"  # default value
