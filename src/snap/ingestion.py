@@ -16,15 +16,18 @@ import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from snap.config import MIN_ACCOUNT_VALUE
 from snap.database import get_connection
 
 logger = logging.getLogger(__name__)
 
-# Date ranges used by the leaderboard ingestion.
-_LEADERBOARD_RANGES = {
-    "7d": 7,
-    "30d": 30,
-    "90d": 90,
+# Per-timeframe leaderboard config: (days, min_total_pnl).
+# min_total_pnl is 0 for all timeframes so percentile-based thresholds can be
+# computed from the full population.
+_LEADERBOARD_RANGES: dict[str, tuple[int, float]] = {
+    "7d": (7, 0),
+    "30d": (30, 0),
+    "90d": (90, 0),
 }
 
 
@@ -61,22 +64,23 @@ async def ingest_leaderboard(client, db_path: str) -> int:
     # Keyed by trader_address
     merged: dict[str, dict] = {}
 
-    for label, days in _LEADERBOARD_RANGES.items():
+    for label, (days, min_pnl) in _LEADERBOARD_RANGES.items():
         date_from = (today - timedelta(days=days)).isoformat()
         date_to = today.isoformat()
 
         logger.info(
-            "Ingesting leaderboard range=%s date_from=%s date_to=%s",
+            "Ingesting leaderboard range=%s date_from=%s date_to=%s min_pnl=%.0f",
             label,
             date_from,
             date_to,
+            min_pnl,
         )
 
         entries = await client.get_leaderboard(
             date_from=date_from,
             date_to=date_to,
-            min_account_value=50_000,
-            min_total_pnl=0,
+            min_account_value=MIN_ACCOUNT_VALUE,
+            min_total_pnl=min_pnl,
         )
 
         logger.info("Leaderboard range=%s returned %d entries", label, len(entries))
@@ -196,15 +200,15 @@ async def ingest_positions(
                 side = "Short" if size_raw < 0 else "Long"
                 size = abs(size_raw)
 
-                entry_price = float(pos.get("entry_price_usd", 0))
-                position_value_usd = float(pos.get("position_value_usd", 0))
-                leverage_value = pos.get("leverage_value", 0)
+                entry_price = float(pos.get("entry_price_usd") or 0)
+                position_value_usd = float(pos.get("position_value_usd") or 0)
+                leverage_value = pos.get("leverage_value")
                 if leverage_value is not None:
                     leverage_value = float(leverage_value)
                 leverage_type = pos.get("leverage_type", "")
-                liquidation_price = float(pos.get("liquidation_price_usd", 0))
-                unrealized_pnl = float(pos.get("unrealized_pnl_usd", 0))
-                margin_used = float(pos.get("margin_used_usd", 0))
+                liquidation_price = float(pos.get("liquidation_price_usd") or 0)
+                unrealized_pnl = float(pos.get("unrealized_pnl_usd") or 0)
+                margin_used = float(pos.get("margin_used_usd") or 0)
                 token_symbol = pos.get("token_symbol", "")
 
                 # Compute mark_price from position_value / abs(size) if size > 0

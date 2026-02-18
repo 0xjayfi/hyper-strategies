@@ -45,21 +45,28 @@ MAX_LEVERAGE: int = 5
 MARGIN_TYPE: str = "isolated"
 STOP_LOSS_PERCENT: float = 5.0
 TRAILING_STOP_PERCENT: float = 8.0
-MAX_POSITION_DURATION_HOURS: int = 72
+MAX_POSITION_DURATION_HOURS: int = 96
 
 # ===========================================================================
 # Trader Selection (Agent 2)
 # ===========================================================================
-MIN_ROI_30D: float = 15.0
-MIN_ACCOUNT_VALUE: float = 50_000
-MIN_TRADE_COUNT: int = 50
-IDEAL_TRADE_COUNT: int = 96
-WIN_RATE_MIN: float = 0.35
-WIN_RATE_MAX: float = 0.85
-MIN_PROFIT_FACTOR: float = 1.5
+# Percentile cutoff for dynamic thresholds (0.0 to 1.0)
+# 0.5 = median (top 50% pass each gate), 0.75 = top 25% pass
+FILTER_PERCENTILE: float = 0.50
+
+# Hard floor for the leaderboard API filter (avoids fetching every trader)
+MIN_ACCOUNT_VALUE: float = 25_000
+
+# Safety bounds (not percentile-based — these are absolute limits)
+WIN_RATE_MIN: float = 0.30
+WIN_RATE_MAX: float = 0.95
 TREND_TRADER_MIN_PF: float = 2.5
 TREND_TRADER_MAX_WR: float = 0.40
+
 TOP_N_TRADERS: int = 15
+
+# Trade cache TTL (hours) — skip API fetch if cached data is fresher
+TRADE_CACHE_TTL_HOURS: int = 48
 
 # ===========================================================================
 # Scoring Weights
@@ -84,6 +91,22 @@ POLL_POSITIONS_MINUTES: int = 15
 POLL_TRADES_MINUTES: int = 5
 POLL_LEADERBOARD_HOURS: int = 24
 MONITOR_INTERVAL_SECONDS: int = 60
+
+# ===========================================================================
+# Slippage allowances (basis points per token)
+# ===========================================================================
+# ===========================================================================
+# Nansen API Rate Limits (per endpoint type)
+# ===========================================================================
+# Leaderboard endpoint — slow server responses (~1-2s/page), no 429 risk
+NANSEN_RATE_LIMIT_LEADERBOARD_PER_SECOND: int = 20
+NANSEN_RATE_LIMIT_LEADERBOARD_PER_MINUTE: int = 300
+NANSEN_RATE_LIMIT_LEADERBOARD_MIN_INTERVAL: float = 0.0
+
+# Profiler endpoints (perp-trades, perp-positions) — fast responses, 429 risk
+NANSEN_RATE_LIMIT_PROFILER_PER_SECOND: int = 1
+NANSEN_RATE_LIMIT_PROFILER_PER_MINUTE: int = 9
+NANSEN_RATE_LIMIT_PROFILER_MIN_INTERVAL: float = 7.0
 
 # ===========================================================================
 # Slippage allowances (basis points per token)

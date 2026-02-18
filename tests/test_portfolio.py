@@ -38,6 +38,7 @@ from snap.portfolio import (
     calculate_copy_size,
     compute_rebalance_diff,
     compute_target_portfolio,
+    net_opposing_targets,
     store_target_allocations,
 )
 
@@ -278,7 +279,7 @@ class TestPerPositionCap:
         A 15k target should be capped to 10k.
         """
         targets = [_make_target("BTC", "Long", 15_000)]
-        result = apply_risk_overlay(targets, account_value=100_000)
+        result = apply_risk_overlay(targets, account_value=100_000, leverage=1)
         assert result[0].target_usd == pytest.approx(10_000.0)
 
     def test_cap_at_hard_cap_large_account(self):
@@ -287,20 +288,20 @@ class TestPerPositionCap:
         A 70k target should be capped to 50k (hard cap).
         """
         targets = [_make_target("BTC", "Long", 70_000)]
-        result = apply_risk_overlay(targets, account_value=1_000_000)
+        result = apply_risk_overlay(targets, account_value=1_000_000, leverage=1)
         assert result[0].target_usd == pytest.approx(50_000.0)
 
     def test_under_cap_not_modified(self):
         """target_usd=5k with account=100k -> max_single=10k, no change."""
         targets = [_make_target("BTC", "Long", 5_000)]
-        result = apply_risk_overlay(targets, account_value=100_000)
+        result = apply_risk_overlay(targets, account_value=100_000, leverage=1)
         assert result[0].target_usd == pytest.approx(5_000.0)
 
     def test_exact_boundary(self):
         """target_usd exactly at cap should not be modified."""
         # account=500k -> max_single = min(50_000, 50_000) = 50_000
         targets = [_make_target("BTC", "Long", 50_000)]
-        result = apply_risk_overlay(targets, account_value=500_000)
+        result = apply_risk_overlay(targets, account_value=500_000, leverage=1)
         assert result[0].target_usd == pytest.approx(50_000.0)
 
 
@@ -322,7 +323,7 @@ class TestPerTokenCap:
         # 25k < 30k, so not capped by token.  But 25k > 20k, so capped by position.
         # Use account=400k -> per_position = min(40k, 50k)=40k; per_token = 60k
         targets = [_make_target("BTC", "Long", 45_000)]
-        result = apply_risk_overlay(targets, account_value=400_000)
+        result = apply_risk_overlay(targets, account_value=400_000, leverage=1)
         # Step 1: min(45k, 40k) = 40k
         # Step 2: min(40k, 60k) = 40k
         assert result[0].target_usd == pytest.approx(40_000.0)
@@ -346,7 +347,7 @@ class TestPerTokenCap:
         # Use a single-position target that is exactly at per-token cap level
         # account=200k -> per_position = 20k, per_token = 30k
         targets = [_make_target("BTC", "Long", 25_000)]
-        result = apply_risk_overlay(targets, account_value=200_000)
+        result = apply_risk_overlay(targets, account_value=200_000, leverage=1)
         # Step 1 caps to 20k (binding), Step 2 would cap to 30k (not binding)
         assert result[0].target_usd == pytest.approx(20_000.0)
 
@@ -357,7 +358,7 @@ class TestPerTokenCap:
             _make_target("BTC", "Long", 25_000),
             _make_target("ETH", "Long", 15_000),
         ]
-        result = apply_risk_overlay(targets, account_value=200_000)
+        result = apply_risk_overlay(targets, account_value=200_000, leverage=1)
         by_token = {t.token_symbol: t.target_usd for t in result}
         # BTC: capped to 20k by per-position
         assert by_token["BTC"] == pytest.approx(20_000.0)
@@ -415,7 +416,7 @@ class TestDirectionalCaps:
             _make_target("ETH", "Long", 10_000, mark_price=3_000),
             _make_target("SOL", "Long", 10_000, mark_price=100),
         ]
-        result = apply_risk_overlay(targets, account_value=100_000)
+        result = apply_risk_overlay(targets, account_value=100_000, leverage=1)
         total_long = sum(t.target_usd for t in result if t.side == "Long")
         # 30k < 60k (max_long), so directional is not binding.
         # But 30k < 50k (max_total), so no scaling.
@@ -457,7 +458,7 @@ class TestDirectionalCaps:
             _make_target("DOGE", "Long", 50_000),
             _make_target("HYPE", "Short", 50_000),
         ]
-        result = apply_risk_overlay(targets, account_value=500_000)
+        result = apply_risk_overlay(targets, account_value=500_000, leverage=1)
         total_long = sum(t.target_usd for t in result if t.side == "Long" and t.target_usd > 0)
         total_short = sum(t.target_usd for t in result if t.side == "Short" and t.target_usd > 0)
         total = total_long + total_short
@@ -474,7 +475,7 @@ class TestDirectionalCaps:
         targets = [
             _make_target(f"TOKEN{i}", "Short", 50_000) for i in range(6)
         ]
-        result = apply_risk_overlay(targets, account_value=500_000)
+        result = apply_risk_overlay(targets, account_value=500_000, leverage=1)
         total_short = sum(t.target_usd for t in result if t.side == "Short" and t.target_usd > 0)
         # Step 5 keeps top 5 positions, each at 50k = 250k
         # max_total = 250k, exactly at cap
@@ -500,7 +501,7 @@ class TestTotalExposureCap:
             _make_target("ETH", "Long", 10_000),
             _make_target("SOL", "Long", 10_000),
         ]
-        result = apply_risk_overlay(targets, account_value=100_000)
+        result = apply_risk_overlay(targets, account_value=100_000, leverage=1)
         total = sum(t.target_usd for t in result)
         assert total <= MAX_TOTAL_EXPOSURE_PCT * 100_000 + 0.01
 
@@ -511,7 +512,7 @@ class TestTotalExposureCap:
         5 positions at 50k = 250k.  Exactly at max.
         """
         targets = [_make_target(f"TOK{i}", "Long", 50_000) for i in range(5)]
-        result = apply_risk_overlay(targets, account_value=500_000)
+        result = apply_risk_overlay(targets, account_value=500_000, leverage=1)
         total = sum(t.target_usd for t in result if t.target_usd > 0)
         assert total == pytest.approx(250_000.0)
 
@@ -523,7 +524,7 @@ class TestTotalExposureCap:
         Step 5 keeps top 5 = 100k.  Exactly at max_total.
         """
         targets = [_make_target(f"T{i}", "Long", 20_000) for i in range(6)]
-        result = apply_risk_overlay(targets, account_value=200_000)
+        result = apply_risk_overlay(targets, account_value=200_000, leverage=1)
         active = [t for t in result if t.target_usd > 0]
         total = sum(t.target_usd for t in active)
         assert total <= MAX_TOTAL_EXPOSURE_PCT * 200_000 + 0.01
@@ -541,7 +542,7 @@ class TestPositionCountTruncation:
         """7 targets -> only top 5 by target_usd survive."""
         targets = [_make_target(f"T{i}", "Long", 1_000 * (i + 1)) for i in range(7)]
         # Targets: T0=1k, T1=2k, T2=3k, T3=4k, T4=5k, T5=6k, T6=7k
-        result = apply_risk_overlay(targets, account_value=500_000)
+        result = apply_risk_overlay(targets, account_value=500_000, leverage=1)
         active = [t for t in result if t.target_usd > 0]
         assert len(active) == MAX_TOTAL_POSITIONS
         # The top 5 by target_usd should be T2..T6 (3k,4k,5k,6k,7k)
@@ -552,7 +553,7 @@ class TestPositionCountTruncation:
     def test_exactly_five_positions_kept(self):
         """Exactly 5 targets -> all kept."""
         targets = [_make_target(f"T{i}", "Long", 5_000) for i in range(5)]
-        result = apply_risk_overlay(targets, account_value=500_000)
+        result = apply_risk_overlay(targets, account_value=500_000, leverage=1)
         active = [t for t in result if t.target_usd > 0]
         assert len(active) == 5
 
@@ -658,7 +659,7 @@ class TestPropertyNoCapsViolated:
             _make_target("AVAX", "Short", 12_000),
             _make_target("LINK", "Long", 8_000),
         ]
-        result = apply_risk_overlay(targets, account_value=account_value)
+        result = apply_risk_overlay(targets, account_value=account_value, leverage=1)
 
         max_single = min(
             MAX_SINGLE_POSITION_PCT * account_value,
@@ -704,7 +705,7 @@ class TestPropertyNoCapsViolated:
             _make_target("ETH", "Long", 150_000),
             _make_target("SOL", "Short", 100_000),
         ]
-        result = apply_risk_overlay(targets, account_value=account_value)
+        result = apply_risk_overlay(targets, account_value=account_value, leverage=1)
 
         max_single = min(
             MAX_SINGLE_POSITION_PCT * account_value,
@@ -723,7 +724,7 @@ class TestPropertyNoCapsViolated:
             _make_target("ETH", "Short", 3_000),
             _make_target("SOL", "Long", 4_000),
         ]
-        result = apply_risk_overlay(targets, account_value=account_value)
+        result = apply_risk_overlay(targets, account_value=account_value, leverage=1)
 
         max_single = min(
             MAX_SINGLE_POSITION_PCT * account_value,
@@ -842,3 +843,135 @@ class TestStoreTargetAllocations:
         assert len(rows) == 2
         tokens = {r["token_symbol"] for r in rows}
         assert tokens == {"BTC", "ETH"}
+
+
+# ===========================================================================
+# net_opposing_targets tests
+# ===========================================================================
+
+
+class TestNetOpposingTargets:
+    """Tests for netting opposing Long/Short targets on the same token."""
+
+    def test_no_opposing_passthrough(self):
+        """Single-side targets pass through unchanged."""
+        targets = [
+            _make_target("BTC", "Long", 10_000),
+            _make_target("ETH", "Short", 5_000),
+        ]
+        result = net_opposing_targets(targets)
+        assert len(result) == 2
+        by_token = {t.token_symbol: t for t in result}
+        assert by_token["BTC"].side == "Long"
+        assert by_token["BTC"].target_usd == pytest.approx(10_000.0)
+        assert by_token["ETH"].side == "Short"
+        assert by_token["ETH"].target_usd == pytest.approx(5_000.0)
+
+    def test_net_to_long(self):
+        """Long > Short -> net Long."""
+        targets = [
+            _make_target("BTC", "Long", 8_000, mark_price=50_000),
+            _make_target("BTC", "Short", 3_000, mark_price=50_000),
+        ]
+        result = net_opposing_targets(targets)
+        assert len(result) == 1
+        assert result[0].token_symbol == "BTC"
+        assert result[0].side == "Long"
+        assert result[0].target_usd == pytest.approx(5_000.0)
+
+    def test_net_to_short(self):
+        """Short > Long -> net Short (the actual bug scenario)."""
+        targets = [
+            _make_target("BTC", "Long", 1_360, mark_price=100_000),
+            _make_target("BTC", "Short", 5_367, mark_price=100_000),
+        ]
+        result = net_opposing_targets(targets)
+        assert len(result) == 1
+        assert result[0].token_symbol == "BTC"
+        assert result[0].side == "Short"
+        assert result[0].target_usd == pytest.approx(4_007.0)
+
+    def test_exact_cancel(self):
+        """Equal Long and Short cancel out — token omitted."""
+        targets = [
+            _make_target("BTC", "Long", 5_000, mark_price=50_000),
+            _make_target("BTC", "Short", 5_000, mark_price=50_000),
+        ]
+        result = net_opposing_targets(targets)
+        assert len(result) == 0
+
+    def test_multiple_tokens_mixed(self):
+        """Mixed: BTC opposing (nets to Short), ETH single Long, SOL opposing (nets to Long)."""
+        targets = [
+            _make_target("BTC", "Long", 2_000, mark_price=100_000),
+            _make_target("BTC", "Short", 6_000, mark_price=100_000),
+            _make_target("ETH", "Long", 3_000, mark_price=3_000),
+            _make_target("SOL", "Long", 4_000, mark_price=100),
+            _make_target("SOL", "Short", 1_000, mark_price=100),
+        ]
+        result = net_opposing_targets(targets)
+        by_token = {t.token_symbol: t for t in result}
+        assert len(result) == 3
+        assert by_token["BTC"].side == "Short"
+        assert by_token["BTC"].target_usd == pytest.approx(4_000.0)
+        assert by_token["ETH"].side == "Long"
+        assert by_token["ETH"].target_usd == pytest.approx(3_000.0)
+        assert by_token["SOL"].side == "Long"
+        assert by_token["SOL"].target_usd == pytest.approx(3_000.0)
+
+    def test_empty_input(self):
+        """Empty list returns empty list."""
+        result = net_opposing_targets([])
+        assert result == []
+
+    def test_mark_price_preserved(self):
+        """Mark price is taken from the largest target."""
+        targets = [
+            _make_target("BTC", "Long", 2_000, mark_price=99_000),
+            _make_target("BTC", "Short", 5_000, mark_price=101_000),
+        ]
+        result = net_opposing_targets(targets)
+        assert len(result) == 1
+        # Short had larger target_usd, so its mark_price should be used
+        assert result[0].mark_price == pytest.approx(101_000.0)
+        assert result[0].target_size == pytest.approx(3_000.0 / 101_000.0)
+
+    def test_integration_with_risk_overlay(self):
+        """Netted targets flow correctly through apply_risk_overlay."""
+        targets = [
+            _make_target("BTC", "Long", 1_360, mark_price=100_000),
+            _make_target("BTC", "Short", 5_367, mark_price=100_000),
+            _make_target("ETH", "Long", 3_000, mark_price=3_000),
+        ]
+        netted = net_opposing_targets(targets)
+        assert len(netted) == 2  # BTC Short + ETH Long
+
+        capped = apply_risk_overlay(netted, account_value=100_000, leverage=1)
+        active = [t for t in capped if t.target_usd > 0]
+        # Both should survive risk overlay (well under caps)
+        assert len(active) == 2
+        tokens = {t.token_symbol for t in active}
+        assert tokens == {"BTC", "ETH"}
+
+
+# ===========================================================================
+# Defensive hardening: duplicate detection in compute_rebalance_diff
+# ===========================================================================
+
+
+class TestRebalanceDiffDuplicateDetection:
+    """Test that compute_rebalance_diff handles duplicate tokens defensively."""
+
+    def test_duplicate_target_keeps_larger(self):
+        """If two targets have the same token, the larger one is kept."""
+        targets = [
+            _make_target("BTC", "Long", 3_000, mark_price=50_000),
+            _make_target("BTC", "Short", 7_000, mark_price=50_000),
+        ]
+        # No current positions — should produce one OPEN with the larger target
+        actions = compute_rebalance_diff(targets, [])
+        assert len(actions) == 1
+        assert actions[0].action == "OPEN"
+        assert actions[0].token_symbol == "BTC"
+        assert actions[0].side == "Short"
+        assert actions[0].delta_usd == pytest.approx(7_000.0)

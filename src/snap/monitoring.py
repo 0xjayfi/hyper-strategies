@@ -22,7 +22,7 @@ from snap.config import (
     TRAILING_STOP_PERCENT,
 )
 from snap.database import get_connection
-from snap.execution import HyperliquidClient
+from snap.execution import HyperliquidClient, PaperTradeClient
 
 logger = logging.getLogger(__name__)
 
@@ -299,6 +299,12 @@ async def _monitor_once(
 
     if not positions:
         return summary
+
+    # Refresh mark prices from Hyperliquid for paper trading
+    if isinstance(client, PaperTradeClient):
+        n = await client.refresh_mark_prices()
+        if n > 0:
+            logger.debug("Refreshed %d mark prices from Hyperliquid", n)
 
     for pos in positions:
         summary["positions_checked"] += 1

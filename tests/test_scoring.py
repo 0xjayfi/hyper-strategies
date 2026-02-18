@@ -20,13 +20,16 @@ from unittest.mock import patch
 import pytest
 
 from snap.scoring import (
+    _percentile,
     classify_style,
     compute_avg_hold_hours,
     compute_composite_score,
     compute_consistency_score,
+    compute_quality_thresholds,
     compute_recency_decay,
     compute_risk_mgmt_score,
     compute_smart_money_bonus,
+    compute_thresholds,
     compute_trade_metrics,
     get_style_multiplier,
     normalize_roi,
@@ -36,6 +39,27 @@ from snap.scoring import (
     passes_tier1,
     score_trader,
 )
+
+# ---------------------------------------------------------------------------
+# Default threshold dicts matching the old hardcoded constants for test compat
+# ---------------------------------------------------------------------------
+
+_TEST_THRESHOLDS = {
+    "roi_30d": 10.0,
+    "account_value": 25_000,
+    "roi_7d": 5.0,
+    "pnl_7d": 0,
+    "roi_90d": 30.0,
+    "pnl_90d": 50_000,
+    "pnl_30d": 10_000,
+}
+
+_TEST_QUALITY_THRESHOLDS = {
+    "min_trade_count": 20,
+    "min_profit_factor": 1.2,
+    "win_rate_min": 0.30,
+    "win_rate_max": 0.95,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -147,26 +171,26 @@ class TestTier1Filter:
     """Tests for passes_tier1() boundary logic."""
 
     def test_tier1_passes_at_exact_thresholds(self):
-        """roi_30d=15.0, account_value=50000 should pass (boundary inclusive)."""
-        assert passes_tier1(15.0, 50_000) is True
+        """roi_30d=10.0, account_value=25000 should pass (boundary inclusive)."""
+        assert passes_tier1(10.0, 25_000, thresholds=_TEST_THRESHOLDS) is True
 
     def test_tier1_fails_below_roi(self):
-        """roi_30d=14.99 should fail."""
-        assert passes_tier1(14.99, 100_000) is False
+        """roi_30d=9.99 should fail."""
+        assert passes_tier1(9.99, 100_000, thresholds=_TEST_THRESHOLDS) is False
 
     def test_tier1_fails_below_account(self):
-        """account_value=49999 should fail."""
-        assert passes_tier1(20.0, 49_999) is False
+        """account_value=24999 should fail."""
+        assert passes_tier1(20.0, 24_999, thresholds=_TEST_THRESHOLDS) is False
 
     def test_tier1_fails_with_none(self):
         """None values should fail."""
-        assert passes_tier1(None, 50_000) is False
-        assert passes_tier1(15.0, None) is False
-        assert passes_tier1(None, None) is False
+        assert passes_tier1(None, 25_000, thresholds=_TEST_THRESHOLDS) is False
+        assert passes_tier1(10.0, None, thresholds=_TEST_THRESHOLDS) is False
+        assert passes_tier1(None, None, thresholds=_TEST_THRESHOLDS) is False
 
     def test_tier1_passes_above_thresholds(self):
         """roi_30d=50, account_value=200000 should pass comfortably."""
-        assert passes_tier1(50.0, 200_000) is True
+        assert passes_tier1(50.0, 200_000, thresholds=_TEST_THRESHOLDS) is True
 
 
 # ===========================================================================
@@ -178,17 +202,17 @@ class TestWinRateBounds:
     """Tests for win-rate bounds within passes_quality_gate()."""
 
     def test_win_rate_above_max_rejected(self):
-        """win_rate=0.86 should fail quality gate (exceeds WIN_RATE_MAX=0.85)."""
-        assert passes_quality_gate(trade_count=100, win_rate=0.86, profit_factor=2.0) is False
+        """win_rate=0.96 should fail quality gate (exceeds WIN_RATE_MAX=0.95)."""
+        assert passes_quality_gate(100, 0.96, 2.0, quality_thresholds=_TEST_QUALITY_THRESHOLDS) is False
 
     def test_win_rate_below_min_rejected(self):
-        """win_rate=0.34 should fail quality gate (below WIN_RATE_MIN=0.35)."""
-        assert passes_quality_gate(trade_count=100, win_rate=0.34, profit_factor=2.0) is False
+        """win_rate=0.29 should fail quality gate (below WIN_RATE_MIN=0.30)."""
+        assert passes_quality_gate(100, 0.29, 2.0, quality_thresholds=_TEST_QUALITY_THRESHOLDS) is False
 
     def test_win_rate_at_exact_bounds_pass(self):
-        """win_rate=0.35 and win_rate=0.85 should both pass with sufficient PF and count."""
-        assert passes_quality_gate(trade_count=100, win_rate=0.35, profit_factor=1.5) is True
-        assert passes_quality_gate(trade_count=100, win_rate=0.85, profit_factor=1.5) is True
+        """win_rate=0.30 and win_rate=0.95 should both pass with sufficient PF and count."""
+        assert passes_quality_gate(100, 0.30, 1.2, quality_thresholds=_TEST_QUALITY_THRESHOLDS) is True
+        assert passes_quality_gate(100, 0.95, 1.2, quality_thresholds=_TEST_QUALITY_THRESHOLDS) is True
 
 
 # ===========================================================================
@@ -200,39 +224,27 @@ class TestProfitFactor:
     """Tests for profit factor logic in passes_quality_gate(), including trend exception."""
 
     def test_profit_factor_above_threshold_passes(self):
-        """PF=1.6, win_rate=0.5 should pass standard check (PF >= 1.5)."""
-        assert passes_quality_gate(trade_count=100, win_rate=0.5, profit_factor=1.6) is True
+        """PF=1.3, win_rate=0.5 should pass standard check (PF >= 1.2)."""
+        assert passes_quality_gate(100, 0.5, 1.3, quality_thresholds=_TEST_QUALITY_THRESHOLDS) is True
 
     def test_profit_factor_below_threshold_fails(self):
-        """PF=1.4, win_rate=0.5 should fail (below MIN_PROFIT_FACTOR=1.5, no trend exception)."""
-        assert passes_quality_gate(trade_count=100, win_rate=0.5, profit_factor=1.4) is False
+        """PF=1.1, win_rate=0.5 should fail (below min_profit_factor=1.2, no trend exception)."""
+        assert passes_quality_gate(100, 0.5, 1.1, quality_thresholds=_TEST_QUALITY_THRESHOLDS) is False
 
     def test_trend_trader_exception(self):
-        """PF=2.6 with win_rate=0.38 (< 0.40) should pass via trend exception.
-
-        The standard PF check (>= 1.5) also passes here, but the key insight
-        is that low-win-rate + high-PF trend traders are not rejected.
-        """
-        assert passes_quality_gate(trade_count=100, win_rate=0.38, profit_factor=2.6) is True
+        """PF=2.6 with win_rate=0.38 (< 0.40) should pass via trend exception."""
+        assert passes_quality_gate(100, 0.38, 2.6, quality_thresholds=_TEST_QUALITY_THRESHOLDS) is True
 
     def test_trend_trader_exception_fails_when_pf_too_low(self):
-        """PF=2.4 with win_rate=0.38 should fail.
+        """PF=1.0 with WR=0.38 should fail both standard and trend exception."""
+        # PF=1.0 fails standard (< 1.2) AND fails trend exception (< 2.5)
+        assert passes_quality_gate(100, 0.38, 1.0, quality_thresholds=_TEST_QUALITY_THRESHOLDS) is False
 
-        The standard check (PF >= 1.5) passes, so PF=2.4 actually passes the
-        normal gate.  To truly test the trend exception's PF floor, use a PF
-        below 1.5 but above the trend minimum.  PF=1.3 with WR=0.38 should
-        fail both the standard (1.3 < 1.5) and trend exception (1.3 < 2.5).
-        """
-        # PF=1.3 fails standard (< 1.5) AND fails trend exception (< 2.5)
-        assert passes_quality_gate(trade_count=100, win_rate=0.38, profit_factor=1.3) is False
+        # PF=2.4, WR=0.38: standard passes since 2.4 >= 1.2, so this IS True
+        assert passes_quality_gate(100, 0.38, 2.4, quality_thresholds=_TEST_QUALITY_THRESHOLDS) is True
 
-        # PF=2.4, WR=0.38: standard passes since 2.4 >= 1.5, so this IS True
-        # (the standard gate catches it before the trend exception is needed)
-        assert passes_quality_gate(trade_count=100, win_rate=0.38, profit_factor=2.4) is True
-
-        # To isolate the trend exception: PF=1.4 fails standard (< 1.5);
-        # trend exception also fails (1.4 < TREND_TRADER_MIN_PF=2.5)
-        assert passes_quality_gate(trade_count=100, win_rate=0.38, profit_factor=1.4) is False
+        # PF=1.1 fails standard (< 1.2); trend exception also fails (1.1 < 2.5)
+        assert passes_quality_gate(100, 0.38, 1.1, quality_thresholds=_TEST_QUALITY_THRESHOLDS) is False
 
 
 # ===========================================================================
@@ -297,10 +309,10 @@ class TestNormalization:
         assert normalize_sharpe(1.5) == pytest.approx(0.5)
 
     def test_normalized_win_rate_clamped(self):
-        """win_rate=0.35 -> 0, win_rate=0.85 -> 1.0, win_rate=0.60 -> 0.5."""
-        assert normalize_win_rate(0.35) == 0.0
-        assert normalize_win_rate(0.85) == pytest.approx(1.0)
-        assert normalize_win_rate(0.60) == pytest.approx(0.5)
+        """win_rate=0.30 -> 0, win_rate=0.95 -> 1.0, win_rate=0.625 -> 0.5."""
+        assert normalize_win_rate(0.30) == 0.0
+        assert normalize_win_rate(0.95) == pytest.approx(1.0)
+        assert normalize_win_rate(0.625) == pytest.approx(0.5)
 
     def test_consistency_score_all_positive(self):
         """All ROIs positive with low variance -> score near 1.0.
@@ -462,11 +474,15 @@ class TestEdgeCases:
             label="Smart Money",
             trades=[],
             avg_leverage=3.0,
+            thresholds=_TEST_THRESHOLDS,
+            quality_thresholds=_TEST_QUALITY_THRESHOLDS,
         )
         assert result["composite_score"] == 0.0
-        # Not eligible: quality gate fails (trade_count=0 < 50)
+        # Not eligible: quality gate fails (trade_count=0 < 20)
         assert result["is_eligible"] == 0
         assert result["passes_quality"] == 0
+        assert result["passes_consistency"] == 1
+        assert "quality:trade_count" in result["fail_reason"]
 
 
 # ===========================================================================
@@ -511,6 +527,8 @@ class TestRegression:
             label="Smart Money",
             trades=trades,
             avg_leverage=4.0,
+            thresholds=_TEST_THRESHOLDS,
+            quality_thresholds=_TEST_QUALITY_THRESHOLDS,
         )
 
         # Patch only datetime.now() in the scoring module while preserving
@@ -544,6 +562,8 @@ class TestRegression:
         # (depends on trade_count of Close trades = 60, exceeding MIN_TRADE_COUNT=50)
         assert result1["trade_count"] == 120  # 60 opens + 60 closes
         assert result1["passes_tier1"] == 1
+        assert "passes_consistency" in result1
+        assert "fail_reason" in result1
 
 
 # ===========================================================================
@@ -614,3 +634,168 @@ class TestCompositeScore:
         swing_score = compute_composite_score(style_multiplier=1.0, **kwargs)
         position_score = compute_composite_score(style_multiplier=0.8, **kwargs)
         assert position_score == pytest.approx(swing_score * 0.8)
+
+
+# ===========================================================================
+# Percentile-based threshold tests
+# ===========================================================================
+
+
+class TestPercentile:
+    """Tests for _percentile() helper."""
+
+    def test_percentile_empty(self):
+        assert _percentile([], 0.5) == 0.0
+
+    def test_percentile_single(self):
+        assert _percentile([42.0], 0.5) == 42.0
+
+    def test_percentile_median(self):
+        vals = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+        assert _percentile(vals, 0.5) == 6.0
+
+    def test_percentile_p25(self):
+        vals = list(range(1, 101))  # 1..100
+        assert _percentile([float(v) for v in vals], 0.25) == 26.0
+
+    def test_percentile_p75(self):
+        vals = list(range(1, 101))
+        assert _percentile([float(v) for v in vals], 0.75) == 76.0
+
+
+class TestComputeThresholds:
+    """Tests for compute_thresholds()."""
+
+    def test_compute_thresholds_p50(self):
+        """At p50, thresholds should be roughly the median of each field."""
+        merged = {}
+        for i in range(100):
+            addr = f"0x{i:040x}"
+            merged[addr] = {
+                "roi_7d": float(i),
+                "roi_30d": float(i * 2),
+                "roi_90d": float(i * 3),
+                "pnl_7d": float(i * 100),
+                "pnl_30d": float(i * 200),
+                "pnl_90d": float(i * 300),
+                "account_value": float(10_000 + i * 1000),
+            }
+        t = compute_thresholds(merged, percentile=0.5)
+        assert t["roi_30d"] == 100.0  # 50 * 2
+        assert t["account_value"] == 60_000.0  # 10000 + 50*1000
+
+    def test_roughly_half_pass_tier1_at_p50(self):
+        """About 50% of the population should pass tier-1 at p50."""
+        merged = {}
+        for i in range(200):
+            addr = f"0x{i:040x}"
+            merged[addr] = {
+                "roi_7d": float(i),
+                "roi_30d": float(i),
+                "roi_90d": float(i),
+                "pnl_7d": float(i * 100),
+                "pnl_30d": float(i * 100),
+                "pnl_90d": float(i * 100),
+                "account_value": float(i * 1000),
+            }
+        t = compute_thresholds(merged, percentile=0.5)
+        passers = sum(
+            1 for trader in merged.values()
+            if passes_tier1(trader["roi_30d"], trader["account_value"], thresholds=t)
+        )
+        # Should be roughly 50% (100/200), give or take a few for boundary
+        assert 90 <= passers <= 110
+
+
+class TestComputeQualityThresholds:
+    """Tests for compute_quality_thresholds()."""
+
+    def test_quality_thresholds_from_metrics(self):
+        metrics = [
+            {"trade_count": 10, "win_rate": 0.4, "profit_factor": 1.0},
+            {"trade_count": 20, "win_rate": 0.5, "profit_factor": 1.5},
+            {"trade_count": 30, "win_rate": 0.6, "profit_factor": 2.0},
+            {"trade_count": 40, "win_rate": 0.7, "profit_factor": 2.5},
+        ]
+        qt = compute_quality_thresholds(metrics, percentile=0.5)
+        # 4 items sorted, idx=int(4*0.5)=2 -> vals[2]
+        assert qt["min_trade_count"] == 30
+        assert qt["min_profit_factor"] == 2.0
+        assert qt["win_rate_min"] > 0.0
+        assert qt["win_rate_max"] <= 1.0
+        assert qt["win_rate_min"] < qt["win_rate_max"]
+
+    def test_empty_metrics(self):
+        qt = compute_quality_thresholds([], percentile=0.5)
+        assert qt["min_trade_count"] == 0.0
+        assert qt["min_profit_factor"] == 0.0
+
+
+# ===========================================================================
+# Fail Reason Diagnostic Tests
+# ===========================================================================
+
+
+class TestFailReasonDiagnostics:
+    """Tests for fail_reason and passes_consistency fields in score_trader()."""
+
+    def test_eligible_trader_has_no_fail_reason(self):
+        """An eligible trader should have fail_reason=None."""
+        trades = _make_bulk_trades(count=60, win_ratio=0.6, pnl_win=300, pnl_loss=-100)
+        result = score_trader(
+            roi_7d=10.0, roi_30d=25.0, roi_90d=45.0,
+            pnl_7d=3000.0, pnl_30d=15000.0, pnl_90d=80000.0,
+            account_value=120_000, label="", trades=trades, avg_leverage=3.0,
+            thresholds=_TEST_THRESHOLDS, quality_thresholds=_TEST_QUALITY_THRESHOLDS,
+        )
+        assert result["is_eligible"] == 1
+        assert result["passes_consistency"] == 1
+        assert result["fail_reason"] is None
+
+    def test_tier1_fail_reason(self):
+        """Trader failing tier1 should have 'tier1' in fail_reason."""
+        result = score_trader(
+            roi_7d=1.0, roi_30d=1.0, roi_90d=1.0,
+            pnl_7d=100.0, pnl_30d=100.0, pnl_90d=100.0,
+            account_value=1_000, label="", trades=[], avg_leverage=None,
+            thresholds=_TEST_THRESHOLDS, quality_thresholds=_TEST_QUALITY_THRESHOLDS,
+        )
+        assert result["passes_tier1"] == 0
+        assert "tier1" in result["fail_reason"]
+
+    def test_consistency_fail_reason(self):
+        """Trader failing consistency gate should have 'consistency' in fail_reason."""
+        result = score_trader(
+            roi_7d=-50.0, roi_30d=25.0, roi_90d=-20.0,
+            pnl_7d=-5000.0, pnl_30d=15000.0, pnl_90d=-10000.0,
+            account_value=120_000, label="", trades=[], avg_leverage=None,
+            thresholds=_TEST_THRESHOLDS, quality_thresholds=_TEST_QUALITY_THRESHOLDS,
+        )
+        assert result["passes_consistency"] == 0
+        assert "consistency" in result["fail_reason"]
+
+    def test_quality_wr_high_fail_reason(self):
+        """Trader with win_rate > max should get 'quality:wr_high'."""
+        # Create trades with 100% win rate (all closes positive)
+        trades = _make_bulk_trades(count=60, win_ratio=1.0, pnl_win=300, pnl_loss=-100)
+        result = score_trader(
+            roi_7d=10.0, roi_30d=25.0, roi_90d=45.0,
+            pnl_7d=3000.0, pnl_30d=15000.0, pnl_90d=80000.0,
+            account_value=120_000, label="", trades=trades, avg_leverage=3.0,
+            thresholds=_TEST_THRESHOLDS, quality_thresholds=_TEST_QUALITY_THRESHOLDS,
+        )
+        assert result["passes_quality"] == 0
+        assert "quality:wr_high" in result["fail_reason"]
+
+    def test_multiple_fail_reasons(self):
+        """Trader failing multiple gates should have comma-separated reasons."""
+        result = score_trader(
+            roi_7d=-50.0, roi_30d=1.0, roi_90d=-20.0,
+            pnl_7d=-5000.0, pnl_30d=100.0, pnl_90d=-10000.0,
+            account_value=1_000, label="", trades=[], avg_leverage=None,
+            thresholds=_TEST_THRESHOLDS, quality_thresholds=_TEST_QUALITY_THRESHOLDS,
+        )
+        assert result["is_eligible"] == 0
+        reasons = result["fail_reason"].split(",")
+        assert len(reasons) >= 2
+        assert "tier1" in reasons

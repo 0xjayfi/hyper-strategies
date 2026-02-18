@@ -28,7 +28,7 @@ from snap.config import (
     TOP_N_TRADERS,
 )
 from snap.database import get_connection, init_db
-from snap.execution import HyperliquidClient, execute_rebalance
+from snap.execution import HyperliquidClient, PaperTradeClient, execute_rebalance
 from snap.monitoring import _monitor_once, rebalance_lock
 from snap.portfolio import (
     apply_risk_overlay,
@@ -36,6 +36,7 @@ from snap.portfolio import (
     compute_target_portfolio,
     get_current_positions,
     get_tracked_traders,
+    net_opposing_targets,
     store_target_allocations,
     TraderSnapshot,
 )
@@ -210,6 +211,27 @@ class SystemScheduler:
                     self.nansen_client, self.db_path, addresses, rebalance_id
                 )
 
+                # 2b. Update PaperTradeClient mark prices from snapshots
+                if isinstance(self.client, PaperTradeClient):
+                    _conn = get_connection(self.db_path)
+                    try:
+                        price_rows = _conn.execute(
+                            """SELECT DISTINCT token_symbol, mark_price
+                               FROM position_snapshots
+                               WHERE snapshot_batch = ? AND mark_price > 0""",
+                            (rebalance_id,),
+                        ).fetchall()
+                        for row in price_rows:
+                            self.client.set_mark_price(
+                                row["token_symbol"], row["mark_price"]
+                            )
+                        logger.info(
+                            "Updated %d mark prices in PaperTradeClient",
+                            len(price_rows),
+                        )
+                    finally:
+                        _conn.close()
+
                 # 3. Build trader snapshots for target computation
                 conn = get_connection(self.db_path)
                 try:
@@ -247,6 +269,7 @@ class SystemScheduler:
 
                 # 5. Compute target portfolio
                 targets = compute_target_portfolio(snapshots, my_account_value)
+                targets = net_opposing_targets(targets)
                 targets = apply_risk_overlay(targets, my_account_value)
                 store_target_allocations(self.db_path, rebalance_id, targets)
 
@@ -339,11 +362,12 @@ class SystemScheduler:
         return elapsed >= REBALANCE_INTERVAL_HOURS * 3600
 
     def _should_ingest_trades(self, now: datetime) -> bool:
-        """Check if we should ingest trades."""
-        if self._last_trade_ingestion is None:
-            return True
-        elapsed = (now - self._last_trade_ingestion).total_seconds()
-        return elapsed >= POLL_TRADES_MINUTES * 60
+        """Check if we should ingest trades.
+
+        Disabled: trade history is only used by the daily scoring engine,
+        not by the monitor or rebalance loop.  Saves Nansen API quota.
+        """
+        return False
 
     def _should_monitor(self, now: datetime) -> bool:
         """Check if we should run a monitoring pass."""

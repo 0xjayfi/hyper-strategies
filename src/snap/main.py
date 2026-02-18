@@ -49,9 +49,15 @@ from snap.observability import (
     setup_json_logging,
     write_health_check,
 )
-from snap.scheduler import SystemScheduler, set_system_state
+from snap.scheduler import SystemScheduler, get_system_state, set_system_state
+from snap.tui import console, print_portfolio, print_scores, render_status_bar
 
 logger = logging.getLogger(__name__)
+
+_COMMANDS_HELP = (
+    "[r] Refresh traders  [b] Rebalance  [m] Monitor  "
+    "[s] Scores  [p] Portfolio  [q] Quit"
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -99,6 +105,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=HEALTH_CHECK_FILE,
         help=f"Health check file path (default: {HEALTH_CHECK_FILE})",
     )
+    parser.add_argument(
+        "--classic",
+        action="store_true",
+        default=False,
+        help="Use the classic Rich-based TUI instead of the new Textual interface",
+    )
     args = parser.parse_args(argv)
 
     # If neither flag given, use config default
@@ -111,10 +123,73 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def _print_status(scheduler: SystemScheduler, args: argparse.Namespace) -> None:
+    """Print the status bar with current scheduler state."""
+    mode = "PAPER" if not args.live else "LIVE"
+    acct_str = get_system_state(args.db_path, "account_value")
+    acct_val = float(acct_str) if acct_str else args.account_value
+    last_refresh = get_system_state(args.db_path, "last_trader_refresh_at")
+    last_rebalance = get_system_state(args.db_path, "last_rebalance_at")
+
+    panel = render_status_bar(
+        state=scheduler.state.value,
+        mode=mode,
+        account_value=acct_val,
+        last_refresh=last_refresh,
+        last_rebalance=last_rebalance,
+    )
+    console.print(panel)
+
+
+async def _input_loop(
+    scheduler: SystemScheduler,
+    args: argparse.Namespace,
+) -> None:
+    """Non-blocking stdin reader for interactive commands."""
+    loop = asyncio.get_running_loop()
+
+    while not scheduler._stop_event.is_set():
+        try:
+            line = await loop.run_in_executor(None, sys.stdin.readline)
+        except EOFError:
+            break
+
+        if not line:
+            break
+
+        key = line.strip().lower()
+        if not key:
+            continue
+
+        if key == "q":
+            console.print("[dim]Shutting down...[/]")
+            scheduler.request_shutdown()
+            break
+        elif key == "r":
+            console.print("[dim]Running trader refresh...[/]")
+            await scheduler._run_trader_refresh()
+            _print_status(scheduler, args)
+        elif key == "b":
+            console.print("[dim]Running rebalance...[/]")
+            await scheduler._run_rebalance()
+            _print_status(scheduler, args)
+        elif key == "m":
+            console.print("[dim]Running monitor pass...[/]")
+            await scheduler._run_monitor()
+            _print_status(scheduler, args)
+        elif key == "s":
+            print_scores(args.db_path)
+        elif key == "p":
+            print_portfolio(args.db_path)
+        else:
+            console.print(f"[dim]Unknown command: {key!r}[/]")
+            console.print(f"[dim]{_COMMANDS_HELP}[/]")
+
+
 async def run(args: argparse.Namespace) -> None:
     """Main async entry point.
 
-    Sets up all components and runs the scheduler until interrupted.
+    Sets up all components and runs the scheduler + input loop concurrently.
     """
     paper_mode = not args.live
 
@@ -145,12 +220,9 @@ async def run(args: argparse.Namespace) -> None:
 
     # 5. Create exchange client
     if paper_mode:
-        # Paper client starts with empty mark prices; scheduler will fetch them
-        client = PaperTradeClient(mark_prices={})
+        client = PaperTradeClient(mark_prices={}, live_prices=True)
         logger.info("Using PaperTradeClient (simulated fills)")
     else:
-        # Placeholder for real Hyperliquid client
-        # In production, replace with a real HyperliquidClient implementation
         logger.error(
             "Live HyperliquidClient not yet implemented. "
             "Use --paper mode or implement a live client."
@@ -188,9 +260,17 @@ async def run(args: argparse.Namespace) -> None:
     # 9. Write initial health check
     write_health_check(args.db_path, health_file=args.health_file)
 
-    # 10. Run scheduler
+    # 10. Print startup banner
+    _print_status(scheduler, args)
+    print_portfolio(args.db_path)
+    console.print(f"\n[bold]{_COMMANDS_HELP}[/]\n")
+
+    # 11. Run scheduler + input loop concurrently
     try:
-        await scheduler.run()
+        await asyncio.gather(
+            scheduler.run(),
+            _input_loop(scheduler, args),
+        )
     except asyncio.CancelledError:
         logger.info("Scheduler cancelled")
     finally:
@@ -214,7 +294,13 @@ async def run(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> None:
     """Synchronous entry point."""
     args = parse_args(argv)
-    asyncio.run(run(args))
+    if args.classic:
+        asyncio.run(run(args))
+    else:
+        from snap.tui_app import SnapApp
+
+        app = SnapApp(db_path=args.db_path)
+        app.run()
 
 
 if __name__ == "__main__":

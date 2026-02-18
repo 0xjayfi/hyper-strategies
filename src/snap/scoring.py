@@ -14,6 +14,7 @@ All threshold constants are imported from ``snap.config``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import statistics
@@ -21,11 +22,10 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from snap.config import (
+    FILTER_PERCENTILE,
     MIN_ACCOUNT_VALUE,
-    MIN_PROFIT_FACTOR,
-    MIN_ROI_30D,
-    MIN_TRADE_COUNT,
     TOP_N_TRADERS,
+    TRADE_CACHE_TTL_HOURS,
     TREND_TRADER_MAX_WR,
     TREND_TRADER_MIN_PF,
     W_CONSISTENCY,
@@ -74,18 +74,27 @@ def _parse_timestamp(ts: str | datetime) -> datetime:
 # ===========================================================================
 
 
-def passes_tier1(roi_30d: float | None, account_value: float | None) -> bool:
+def passes_tier1(
+    roi_30d: float | None,
+    account_value: float | None,
+    thresholds: dict | None = None,
+) -> bool:
     """Check if a trader passes tier-1 filters.
 
-    Requirements:
-    - ``roi_30d >= MIN_ROI_30D`` (15.0)
-    - ``account_value >= MIN_ACCOUNT_VALUE`` (50000)
+    When *thresholds* is provided, uses dynamic percentile-based cutoffs:
+    - ``roi_30d >= thresholds["roi_30d"]``
+    - ``account_value >= thresholds["account_value"]``
 
     Returns ``False`` if either value is ``None``.
     """
     if roi_30d is None or account_value is None:
         return False
-    return roi_30d >= MIN_ROI_30D and account_value >= MIN_ACCOUNT_VALUE
+    if thresholds is None:
+        return True  # no thresholds = no filter
+    return (
+        roi_30d >= thresholds["roi_30d"]
+        and account_value >= thresholds["account_value"]
+    )
 
 
 # ===========================================================================
@@ -100,17 +109,18 @@ def passes_consistency_gate(
     pnl_7d: float | None,
     pnl_30d: float | None,
     pnl_90d: float | None,
+    thresholds: dict | None = None,
 ) -> tuple[bool, bool]:
     """Check multi-timeframe consistency gate.
 
-    Gates:
-    - 7d: ``pnl_7d > 0`` AND ``roi_7d > 5``
-    - 30d: ``pnl_30d > 10000`` AND ``roi_30d > 15``
-    - 90d: ``pnl_90d > 50000`` AND ``roi_90d > 30``
+    When *thresholds* is provided, uses dynamic percentile-based cutoffs:
+    - 7d: ``pnl_7d >= thresholds["pnl_7d"]`` AND ``roi_7d >= thresholds["roi_7d"]``
+    - 30d: ``pnl_30d >= thresholds["pnl_30d"]`` AND ``roi_30d >= thresholds["roi_30d"]``
+    - 90d: ``pnl_90d >= thresholds["pnl_90d"]`` AND ``roi_90d >= thresholds["roi_90d"]``
 
     Traders must pass ALL three.
 
-    **Fallback:** If 90d data is ``None`` (new trader), require 7d+30d pass
+    **Fallback:** If a timeframe's data is ``None``, require the other two
     and mark as "provisional" (second return value ``True``).
 
     Returns
@@ -118,25 +128,36 @@ def passes_consistency_gate(
     tuple[bool, bool]
         ``(passes, is_provisional)``
     """
+    if thresholds is None:
+        thresholds = {
+            "pnl_7d": 0, "roi_7d": 0,
+            "pnl_30d": 0, "roi_30d": 0,
+            "pnl_90d": 0, "roi_90d": 0,
+        }
+
     # Check 7d gate
     pass_7d = (
         pnl_7d is not None
         and roi_7d is not None
-        and pnl_7d > 0
-        and roi_7d > 5
+        and pnl_7d >= thresholds["pnl_7d"]
+        and roi_7d >= thresholds["roi_7d"]
     )
 
     # Check 30d gate
     pass_30d = (
         pnl_30d is not None
         and roi_30d is not None
-        and pnl_30d > 10_000
-        and roi_30d > 15
+        and pnl_30d >= thresholds["pnl_30d"]
+        and roi_30d >= thresholds["roi_30d"]
     )
 
     # Check 90d gate
     has_90d = roi_90d is not None and pnl_90d is not None
-    pass_90d = has_90d and pnl_90d > 50_000 and roi_90d > 30  # type: ignore[operator]
+    pass_90d = (
+        has_90d
+        and pnl_90d >= thresholds["pnl_90d"]  # type: ignore[operator]
+        and roi_90d >= thresholds["roi_90d"]  # type: ignore[operator]
+    )
 
     # All three pass -> full approval
     if pass_7d and pass_30d and pass_90d:
@@ -144,6 +165,15 @@ def passes_consistency_gate(
 
     # Fallback: no 90d data, 7d+30d pass -> provisional
     if not has_90d and pass_7d and pass_30d:
+        return True, True
+
+    # Fallback: no 7d data, 30d+90d pass -> provisional
+    has_7d = roi_7d is not None and pnl_7d is not None
+    if not has_7d and pass_30d and pass_90d:
+        return True, True
+
+    # Fallback: only 30d passes and either 7d or 90d missing -> provisional
+    if pass_30d and (not has_7d or not has_90d):
         return True, True
 
     return False, False
@@ -328,29 +358,57 @@ def compute_avg_hold_hours(trades: list[dict]) -> float:
 
 
 def passes_quality_gate(
-    trade_count: int, win_rate: float, profit_factor: float
+    trade_count: int,
+    win_rate: float,
+    profit_factor: float,
+    quality_thresholds: dict | None = None,
+    *,
+    wr_bounds: tuple[float, float] | None = None,
+    trend_pf: float | None = None,
+    trend_wr: float | None = None,
 ) -> bool:
     """Check if a trader passes the quality gate based on trade metrics.
 
-    Requirements:
-    - ``trade_count >= MIN_TRADE_COUNT`` (50)
-    - ``WIN_RATE_MIN (0.35) <= win_rate <= WIN_RATE_MAX (0.85)``
-    - ``profit_factor >= MIN_PROFIT_FACTOR (1.5)`` **OR**
-      trend trader exception: ``win_rate < TREND_TRADER_MAX_WR (0.40)``
-      AND ``profit_factor >= TREND_TRADER_MIN_PF (2.5)``
+    When *quality_thresholds* is provided, uses dynamic cutoffs:
+    - ``trade_count >= quality_thresholds["min_trade_count"]``
+    - ``quality_thresholds["win_rate_min"] <= win_rate <= quality_thresholds["win_rate_max"]``
+    - ``profit_factor >= quality_thresholds["min_profit_factor"]``
+
+    Hard safety bounds ``WIN_RATE_MIN`` / ``WIN_RATE_MAX`` from config are
+    always enforced regardless of dynamic thresholds.  Pass *wr_bounds* to
+    override the config values (used by the grid search).
+
+    The trend trader exception (low win rate + high PF) still applies.
+    Pass *trend_pf* / *trend_wr* to override the config defaults.
     """
-    if trade_count < MIN_TRADE_COUNT:
+    _wr_min = wr_bounds[0] if wr_bounds is not None else WIN_RATE_MIN
+    _wr_max = wr_bounds[1] if wr_bounds is not None else WIN_RATE_MAX
+    _trend_pf = trend_pf if trend_pf is not None else TREND_TRADER_MIN_PF
+    _trend_wr = trend_wr if trend_wr is not None else TREND_TRADER_MAX_WR
+
+    if quality_thresholds is None:
+        quality_thresholds = {
+            "min_trade_count": 0,
+            "min_profit_factor": 0,
+            "win_rate_min": _wr_min,
+            "win_rate_max": _wr_max,
+        }
+
+    if trade_count < quality_thresholds["min_trade_count"]:
         return False
 
-    if not (WIN_RATE_MIN <= win_rate <= WIN_RATE_MAX):
+    # Dynamic win rate bounds, clamped by hard safety limits
+    wr_lo = max(quality_thresholds["win_rate_min"], _wr_min)
+    wr_hi = min(quality_thresholds["win_rate_max"], _wr_max)
+    if not (wr_lo <= win_rate <= wr_hi):
         return False
 
     # Standard profit factor check
-    if profit_factor >= MIN_PROFIT_FACTOR:
+    if profit_factor >= quality_thresholds["min_profit_factor"]:
         return True
 
     # Trend trader exception: low win rate but high profit factor
-    if win_rate < TREND_TRADER_MAX_WR and profit_factor >= TREND_TRADER_MIN_PF:
+    if win_rate < _trend_wr and profit_factor >= _trend_pf:
         return True
 
     return False
@@ -377,12 +435,24 @@ def normalize_sharpe(pseudo_sharpe: float) -> float:
     return min(1.0, max(0.0, pseudo_sharpe / 3.0))
 
 
-def normalize_win_rate(win_rate: float) -> float:
+def normalize_win_rate(
+    win_rate: float,
+    *,
+    wr_min: float | None = None,
+    wr_max: float | None = None,
+) -> float:
     """Normalized win rate score.
 
-    ``NORMALIZED_WIN_RATE = min(1.0, max(0, (win_rate - 0.35) / (0.85 - 0.35)))``
+    ``NORMALIZED_WIN_RATE = min(1.0, max(0, (win_rate - wr_min) / (wr_max - wr_min)))``
+
+    Pass *wr_min* / *wr_max* to override config defaults.
     """
-    return min(1.0, max(0.0, (win_rate - 0.35) / (0.85 - 0.35)))
+    lo = wr_min if wr_min is not None else WIN_RATE_MIN
+    hi = wr_max if wr_max is not None else WIN_RATE_MAX
+    denom = hi - lo
+    if denom <= 0:
+        return 0.0
+    return min(1.0, max(0.0, (win_rate - lo) / denom))
 
 
 def compute_consistency_score(
@@ -495,16 +565,24 @@ def compute_recency_decay(most_recent_trade_ts: str | None) -> float:
 # ===========================================================================
 
 
-def classify_style(trades_per_day: float, avg_hold_hours: float) -> str:
+def classify_style(
+    trades_per_day: float,
+    avg_hold_hours: float,
+    *,
+    hft_tpd: float | None = None,
+    hft_ahh: float | None = None,
+) -> str:
     """Classify a trader's style based on trading frequency and hold duration.
 
     Categories:
     - ``"HFT"``      - High-frequency trader (rejected from universe).
-                       trades_per_day > 5 AND avg_hold_hours < 4.
+                       trades_per_day > *hft_tpd* AND avg_hold_hours < *hft_ahh*.
     - ``"SWING"``    - Swing trader (ideal copytrading candidate).
                        trades_per_day >= 0.3 AND avg_hold_hours < 336 (14 days).
     - ``"POSITION"`` - Position trader (acceptable but down-weighted).
                        Everything else.
+
+    Pass *hft_tpd* / *hft_ahh* to override the default HFT thresholds (5 / 4).
 
     Parameters
     ----------
@@ -518,7 +596,10 @@ def classify_style(trades_per_day: float, avg_hold_hours: float) -> str:
     str
         One of ``"HFT"``, ``"SWING"``, or ``"POSITION"``.
     """
-    if trades_per_day > 5 and avg_hold_hours < 4:
+    _hft_tpd = hft_tpd if hft_tpd is not None else 5.0
+    _hft_ahh = hft_ahh if hft_ahh is not None else 4.0
+
+    if trades_per_day > _hft_tpd and avg_hold_hours < _hft_ahh:
         return "HFT"
     elif trades_per_day >= 0.3 and avg_hold_hours < 336:
         return "SWING"
@@ -526,12 +607,14 @@ def classify_style(trades_per_day: float, avg_hold_hours: float) -> str:
         return "POSITION"
 
 
-def get_style_multiplier(style: str) -> float:
+def get_style_multiplier(style: str, *, position_mult: float | None = None) -> float:
     """Return the score multiplier for a given trading style.
 
     - ``"HFT"``      -> 0.0 (excluded from universe)
     - ``"SWING"``    -> 1.0 (ideal)
-    - ``"POSITION"`` -> 0.8 (acceptable, slight penalty)
+    - ``"POSITION"`` -> *position_mult* (default 0.8, acceptable, slight penalty)
+
+    Pass *position_mult* to override the POSITION multiplier.
 
     Parameters
     ----------
@@ -546,7 +629,7 @@ def get_style_multiplier(style: str) -> float:
     _STYLE_MULTIPLIERS = {
         "HFT": 0.0,
         "SWING": 1.0,
-        "POSITION": 0.8,
+        "POSITION": position_mult if position_mult is not None else 0.8,
     }
     return _STYLE_MULTIPLIERS.get(style, 0.0)
 
@@ -565,6 +648,8 @@ def compute_composite_score(
     risk_mgmt_score: float,
     style_multiplier: float,
     recency_decay: float,
+    *,
+    weights: dict[str, float] | None = None,
 ) -> float:
     """Compute the final composite trader score.
 
@@ -579,13 +664,8 @@ def compute_composite_score(
             W_RISK_MGMT * risk_mgmt_score
         ) * style_multiplier * recency_decay
 
-    Weights (from ``snap.config``):
-    - ``W_ROI``         = 0.25
-    - ``W_SHARPE``      = 0.20
-    - ``W_WIN_RATE``    = 0.15
-    - ``W_CONSISTENCY`` = 0.20
-    - ``W_SMART_MONEY`` = 0.10
-    - ``W_RISK_MGMT``   = 0.10
+    Pass *weights* dict with keys ``roi``, ``sharpe``, ``win_rate``,
+    ``consistency``, ``smart_money``, ``risk_mgmt`` to override config defaults.
 
     Parameters
     ----------
@@ -605,19 +685,29 @@ def compute_composite_score(
         Style multiplier (0.0 for HFT, 0.8 for POSITION, 1.0 for SWING).
     recency_decay:
         Recency decay factor in [0, 1], based on days since last trade.
+    weights:
+        Optional dict to override scoring weights.
 
     Returns
     -------
     float
         Final composite score, >= 0.
     """
+    w = weights or {}
+    w_roi = w.get("roi", W_ROI)
+    w_sharpe = w.get("sharpe", W_SHARPE)
+    w_win_rate = w.get("win_rate", W_WIN_RATE)
+    w_consistency = w.get("consistency", W_CONSISTENCY)
+    w_smart_money = w.get("smart_money", W_SMART_MONEY)
+    w_risk_mgmt = w.get("risk_mgmt", W_RISK_MGMT)
+
     weighted_sum = (
-        W_ROI * normalized_roi
-        + W_SHARPE * normalized_sharpe
-        + W_WIN_RATE * normalized_win_rate
-        + W_CONSISTENCY * consistency_score
-        + W_SMART_MONEY * smart_money_bonus
-        + W_RISK_MGMT * risk_mgmt_score
+        w_roi * normalized_roi
+        + w_sharpe * normalized_sharpe
+        + w_win_rate * normalized_win_rate
+        + w_consistency * consistency_score
+        + w_smart_money * smart_money_bonus
+        + w_risk_mgmt * risk_mgmt_score
     )
     return weighted_sum * style_multiplier * recency_decay
 
@@ -638,6 +728,10 @@ def score_trader(
     label: str,
     trades: list[dict],
     avg_leverage: float | None,
+    thresholds: dict | None = None,
+    quality_thresholds: dict | None = None,
+    *,
+    overrides: dict | None = None,
 ) -> dict:
     """Score a single trader end-to-end, returning all fields for the trader_scores table.
 
@@ -685,12 +779,28 @@ def score_trader(
         ``style_multiplier``, ``recency_decay``, ``composite_score``,
         ``passes_tier1``, ``passes_quality``, ``is_eligible``.
     """
+    # Unpack overrides
+    ovr = overrides or {}
+    _wr_bounds = None
+    if "WIN_RATE_MIN" in ovr or "WIN_RATE_MAX" in ovr:
+        _wr_bounds = (
+            ovr.get("WIN_RATE_MIN", WIN_RATE_MIN),
+            ovr.get("WIN_RATE_MAX", WIN_RATE_MAX),
+        )
+    _weights = ovr.get("weights")  # dict or None
+    _hft_tpd = ovr.get("hft_tpd")
+    _hft_ahh = ovr.get("hft_ahh")
+    _position_mult = ovr.get("position_mult")
+    _trend_pf = ovr.get("TREND_TRADER_MIN_PF")
+    _trend_wr = ovr.get("TREND_TRADER_MAX_WR")
+
     # Step 1: Tier-1 filter
-    tier1_ok = passes_tier1(roi_30d, account_value)
+    tier1_ok = passes_tier1(roi_30d, account_value, thresholds=thresholds)
 
     # Step 2: Consistency gate
     consistency_ok, is_provisional = passes_consistency_gate(
-        roi_7d, roi_30d, roi_90d, pnl_7d, pnl_30d, pnl_90d
+        roi_7d, roi_30d, roi_90d, pnl_7d, pnl_30d, pnl_90d,
+        thresholds=thresholds,
     )
 
     # Step 3: Trade metrics
@@ -704,16 +814,29 @@ def score_trader(
     most_recent_trade = metrics["most_recent_trade"]
 
     # Step 4: Quality gate
-    quality_ok = passes_quality_gate(trade_count, win_rate, profit_factor)
+    quality_ok = passes_quality_gate(
+        trade_count, win_rate, profit_factor,
+        quality_thresholds=quality_thresholds,
+        wr_bounds=_wr_bounds,
+        trend_pf=_trend_pf,
+        trend_wr=_trend_wr,
+    )
 
     # Step 5: Style classification
-    style = classify_style(trades_per_day, avg_hold_hours)
-    style_mult = get_style_multiplier(style)
+    style = classify_style(
+        trades_per_day, avg_hold_hours,
+        hft_tpd=_hft_tpd, hft_ahh=_hft_ahh,
+    )
+    style_mult = get_style_multiplier(style, position_mult=_position_mult)
 
     # Step 6: Normalized components
     norm_roi = normalize_roi(roi_30d if roi_30d is not None else 0.0)
     norm_sharpe = normalize_sharpe(pseudo_sharpe)
-    norm_win_rate = normalize_win_rate(win_rate)
+    norm_win_rate = normalize_win_rate(
+        win_rate,
+        wr_min=_wr_bounds[0] if _wr_bounds else None,
+        wr_max=_wr_bounds[1] if _wr_bounds else None,
+    )
     cons_score = compute_consistency_score(
         roi_7d if roi_7d is not None else 0.0,
         roi_30d if roi_30d is not None else 0.0,
@@ -737,10 +860,35 @@ def score_trader(
         risk_mgmt_score=risk_score,
         style_multiplier=style_mult,
         recency_decay=rec_decay,
+        weights=_weights,
     )
 
     # Step 9: Eligibility determination
     is_eligible = tier1_ok and consistency_ok and quality_ok and style != "HFT"
+
+    # Step 10: Build diagnostic fail_reason string
+    _wr_min_eff = _wr_bounds[0] if _wr_bounds else WIN_RATE_MIN
+    _wr_max_eff = _wr_bounds[1] if _wr_bounds else WIN_RATE_MAX
+    fail_reasons: list[str] = []
+    if not tier1_ok:
+        fail_reasons.append("tier1")
+    if not consistency_ok:
+        fail_reasons.append("consistency")
+    if not quality_ok:
+        qt = quality_thresholds or {}
+        if trade_count < qt.get("min_trade_count", 0):
+            fail_reasons.append("quality:trade_count")
+        else:
+            wr_lo = max(qt.get("win_rate_min", _wr_min_eff), _wr_min_eff)
+            wr_hi = min(qt.get("win_rate_max", _wr_max_eff), _wr_max_eff)
+            if win_rate < wr_lo:
+                fail_reasons.append("quality:wr_low")
+            elif win_rate > wr_hi:
+                fail_reasons.append("quality:wr_high")
+            else:
+                fail_reasons.append("quality:profit_factor")
+    if style == "HFT":
+        fail_reasons.append("style:hft")
 
     return {
         "roi_7d": roi_7d,
@@ -766,20 +914,190 @@ def score_trader(
         "recency_decay": rec_decay,
         "composite_score": composite,
         "passes_tier1": int(tier1_ok),
+        "passes_consistency": int(consistency_ok),
         "passes_quality": int(quality_ok),
         "is_eligible": int(is_eligible),
+        "fail_reason": ",".join(fail_reasons) if fail_reasons else None,
     }
 
 
 # ===========================================================================
-# 10. Trader Universe Refresh Orchestrator (Agent 2)
+# 10. Percentile-Based Threshold Computation
 # ===========================================================================
 
 
-_LEADERBOARD_RANGES = {
-    "7d": 7,
-    "30d": 30,
-    "90d": 90,
+def _percentile(vals: list[float], p: float) -> float:
+    """Return the *p*-th percentile from a sorted list of values.
+
+    Uses the "nearest rank" method: ``idx = int(len(vals) * p)``.
+    Returns ``0.0`` if *vals* is empty.
+    """
+    if not vals:
+        return 0.0
+    idx = int(len(vals) * p)
+    return vals[min(idx, len(vals) - 1)]
+
+
+def compute_thresholds(
+    merged: dict[str, dict],
+    percentile: float = FILTER_PERCENTILE,
+) -> dict:
+    """Compute dynamic percentile-based thresholds from the merged leaderboard.
+
+    For each metric (roi_7d, roi_30d, roi_90d, pnl_7d, pnl_30d, pnl_90d,
+    account_value), collects non-``None`` values from *merged*, sorts them,
+    and picks the value at the given percentile.
+
+    Parameters
+    ----------
+    merged:
+        Address-keyed dict of merged leaderboard records.
+    percentile:
+        Percentile cutoff in [0.0, 1.0]. 0.5 = median.
+
+    Returns
+    -------
+    dict
+        Keys match the fields used by ``passes_tier1`` and
+        ``passes_consistency_gate``.
+    """
+    fields = ["roi_7d", "roi_30d", "roi_90d", "pnl_7d", "pnl_30d", "pnl_90d"]
+    thresholds: dict[str, float] = {}
+
+    for field in fields:
+        vals = sorted(
+            t[field] for t in merged.values() if t.get(field) is not None
+        )
+        thresholds[field] = _percentile(vals, percentile)
+
+    acct_vals = sorted(t["account_value"] for t in merged.values())
+    thresholds["account_value"] = _percentile(acct_vals, percentile)
+
+    return thresholds
+
+
+def compute_quality_thresholds(
+    trade_metrics_list: list[dict],
+    percentile: float = FILTER_PERCENTILE,
+) -> dict:
+    """Compute dynamic quality gate thresholds from fetched trade metrics.
+
+    Called after tier-1 passers have had their trades fetched.  Computes
+    percentile-based cutoffs for trade_count, win_rate, and profit_factor.
+
+    Parameters
+    ----------
+    trade_metrics_list:
+        List of dicts from ``compute_trade_metrics()`` — one per trader.
+    percentile:
+        Percentile cutoff in [0.0, 1.0].
+
+    Returns
+    -------
+    dict
+        Keys: ``min_trade_count``, ``min_profit_factor``,
+        ``win_rate_min``, ``win_rate_max``.
+    """
+    tc_vals = sorted(
+        m["trade_count"] for m in trade_metrics_list if m["trade_count"] > 0
+    )
+    pf_vals = sorted(
+        m["profit_factor"]
+        for m in trade_metrics_list
+        if m["profit_factor"] > 0 and not math.isinf(m["profit_factor"])
+    )
+    wr_vals = sorted(
+        m["win_rate"] for m in trade_metrics_list if m["trade_count"] > 0
+    )
+
+    # For win rate, use symmetric bounds around the percentile
+    # p25 as lower bound, p75 as upper bound (symmetric around median)
+    low_pct = 1.0 - percentile  # e.g. 0.25 when percentile=0.50
+    high_pct = percentile + (1.0 - percentile) / 2  # e.g. 0.75
+
+    return {
+        "min_trade_count": _percentile(tc_vals, percentile),
+        "min_profit_factor": _percentile(pf_vals, percentile),
+        "win_rate_min": _percentile(wr_vals, low_pct),
+        "win_rate_max": _percentile(wr_vals, high_pct),
+    }
+
+
+# ===========================================================================
+# 11. Trade Data Cache Helper
+# ===========================================================================
+
+
+def _get_cached_trades(db_path: str, address: str, ttl_hours: int) -> list[dict] | None:
+    """Return cached trades from ``trade_history`` if fresh enough.
+
+    Returns ``None`` if no cached data or if all rows are older than
+    *ttl_hours*.
+    """
+    conn = get_connection(db_path)
+    try:
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = conn.execute(
+            """SELECT token_symbol, action, side, size, price, value_usd,
+                      closed_pnl, fee_usd, timestamp
+               FROM trade_history
+               WHERE address = ? AND fetched_at >= ?
+               ORDER BY timestamp""",
+            (address, cutoff),
+        ).fetchall()
+        if not rows:
+            return None
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def _cache_trades(db_path: str, address: str, trades: list[dict]) -> None:
+    """Store fetched trades into the ``trade_history`` table."""
+    if not trades:
+        return
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            for t in trades:
+                conn.execute(
+                    """INSERT OR IGNORE INTO trade_history
+                       (address, token_symbol, action, side, size, price,
+                        value_usd, closed_pnl, fee_usd, timestamp, fetched_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        address,
+                        t.get("token_symbol"),
+                        t.get("action"),
+                        t.get("side"),
+                        t.get("size"),
+                        t.get("price"),
+                        t.get("value_usd"),
+                        t.get("closed_pnl"),
+                        t.get("fee_usd"),
+                        t.get("timestamp"),
+                        now_utc,
+                    ),
+                )
+    finally:
+        conn.close()
+
+
+# ===========================================================================
+# 12. Trader Universe Refresh Orchestrator (Agent 2)
+# ===========================================================================
+
+
+# Per-timeframe leaderboard config: (days, min_total_pnl).
+# min_total_pnl is 0 for all timeframes so percentile computation sees the
+# full population.
+_LEADERBOARD_RANGES: dict[str, tuple[int, float]] = {
+    "7d": (7, 0),
+    "30d": (30, 0),
+    "90d": (90, 0),
 }
 
 
@@ -789,6 +1107,9 @@ async def _fetch_and_merge_leaderboard(client) -> dict[str, dict]:
     For each of the 7d, 30d, and 90d windows this function calls
     ``client.get_leaderboard`` (with the standard filters) and merges
     the results by ``trader_address``.
+
+    Filters are tightened per-timeframe to match the consistency gate
+    thresholds, dramatically reducing the number of returned traders.
 
     Returns
     -------
@@ -800,22 +1121,23 @@ async def _fetch_and_merge_leaderboard(client) -> dict[str, dict]:
     today = datetime.now(timezone.utc).date()
     merged: dict[str, dict] = {}
 
-    for label, days in _LEADERBOARD_RANGES.items():
+    for label, (days, min_pnl) in _LEADERBOARD_RANGES.items():
         date_from = (today - timedelta(days=days)).isoformat()
         date_to = today.isoformat()
 
         logger.info(
-            "Fetching leaderboard range=%s date_from=%s date_to=%s",
+            "Fetching leaderboard range=%s date_from=%s date_to=%s min_pnl=%.0f",
             label,
             date_from,
             date_to,
+            min_pnl,
         )
 
         entries = await client.get_leaderboard(
             date_from=date_from,
             date_to=date_to,
-            min_account_value=50_000,
-            min_total_pnl=0,
+            min_account_value=MIN_ACCOUNT_VALUE,
+            min_total_pnl=min_pnl,
         )
 
         logger.info("Leaderboard range=%s returned %d entries", label, len(entries))
@@ -901,34 +1223,42 @@ async def _fetch_avg_leverage(client, address: str) -> float | None:
     return sum(leverages) / len(leverages)
 
 
-async def refresh_trader_universe(client, db_path: str) -> int:
-    """Full daily trader refresh orchestrator.
+async def refresh_trader_universe(
+    client,
+    db_path: str,
+    *,
+    overrides: dict | None = None,
+) -> int:
+    """Full daily trader refresh orchestrator with percentile-based thresholds.
 
-    Performs the complete pipeline for refreshing the scored trader universe:
+    Two-phase approach:
 
-    1. **Fetch & merge leaderboard** -- Query the Nansen API for 3 timeframes
-       (7d, 30d, 90d) and merge by address to get per-timeframe ROI/PnL.
-    2. **Upsert traders** -- Store/update addresses, labels, and account values
-       in the ``traders`` table.
-    3. **Score each trader** -- For each trader that passes tier-1:
-       a. Fetch their 90-day trade history via ``client.get_perp_trades``.
-       b. Fetch their current positions for average leverage.
-       c. Run ``score_trader()`` to compute all metrics and composite score.
-       d. Insert score record into the ``trader_scores`` table.
-    4. **Log summary** -- Report total eligible traders and top N by score.
+    1. **Fetch & merge leaderboard** across 3 timeframes.
+    2. **Compute dynamic thresholds** (p50 of the merged population).
+    3. **Phase 1 — Tier-1 pre-check**: identify traders that pass tier-1 and
+       need trade data fetched.  Trades are loaded from the DB cache when
+       fresh enough, otherwise fetched from the API and cached.
+    4. **Compute quality thresholds** from the fetched trade metrics.
+    5. **Phase 2 — Full scoring**: run ``score_trader()`` for every merged
+       trader using both dynamic threshold dicts, and insert results.
+    6. **Log summary** of eligible traders.
 
     Parameters
     ----------
-    client:
-        An initialised ``NansenClient`` instance.
-    db_path:
-        Filesystem path to the SQLite database.
+    overrides:
+        Optional dict of parameter overrides (from grid search variants).
+        Recognised keys: ``FILTER_PERCENTILE``, ``WIN_RATE_MIN``,
+        ``WIN_RATE_MAX``, ``TREND_TRADER_MIN_PF``, ``TREND_TRADER_MAX_WR``,
+        ``hft_tpd``, ``hft_ahh``, ``position_mult``, ``weights``.
 
     Returns
     -------
     int
         Count of eligible traders stored (those with ``is_eligible = 1``).
     """
+    ovr = overrides or {}
+    _percentile = ovr.get("FILTER_PERCENTILE", FILTER_PERCENTILE)
+
     # ------------------------------------------------------------------
     # Step 1: Fetch and merge leaderboard across 3 timeframes
     # ------------------------------------------------------------------
@@ -936,7 +1266,23 @@ async def refresh_trader_universe(client, db_path: str) -> int:
     logger.info("Merged leaderboard: %d unique traders", len(merged))
 
     # ------------------------------------------------------------------
-    # Step 2: Upsert trader base data into the traders table
+    # Step 2: Compute dynamic thresholds from the population
+    # ------------------------------------------------------------------
+    thresholds = compute_thresholds(merged, percentile=_percentile)
+    logger.info(
+        "Dynamic thresholds (p%.0f): roi_30d=%.4f%% acct=%.0f "
+        "roi_7d=%.4f%% pnl_7d=%.0f roi_90d=%.4f%% pnl_90d=%.0f",
+        _percentile * 100,
+        thresholds["roi_30d"],
+        thresholds["account_value"],
+        thresholds["roi_7d"],
+        thresholds["pnl_7d"],
+        thresholds["roi_90d"],
+        thresholds["pnl_90d"],
+    )
+
+    # ------------------------------------------------------------------
+    # Step 3: Upsert trader base data into the traders table
     # ------------------------------------------------------------------
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_connection(db_path)
@@ -958,39 +1304,39 @@ async def refresh_trader_universe(client, db_path: str) -> int:
         conn.close()
 
     # ------------------------------------------------------------------
-    # Step 3: Score each trader
+    # Step 4: Phase 1 — Identify tier-1 passers and fetch their trades
     # ------------------------------------------------------------------
     today = datetime.now(timezone.utc).date()
     date_from_90d = (today - timedelta(days=90)).isoformat()
     date_to = today.isoformat()
 
-    scored_count = 0
-    eligible_count = 0
+    # Collect trade metrics for tier-1 passers (needed for quality thresholds)
+    tier1_data: dict[str, dict] = {}  # addr -> {trades, avg_leverage, metrics}
+    tier1_count = 0
+    cache_hits = 0
 
     for addr, trader in merged.items():
         roi_30d = trader.get("roi_30d")
         acct_val = trader.get("account_value")
 
-        # Quick tier-1 pre-check to avoid unnecessary API calls
-        if not passes_tier1(roi_30d, acct_val):
-            logger.debug(
-                "Trader %s failed tier-1 pre-check (roi_30d=%s, account_value=%s), "
-                "scoring with defaults",
-                addr,
-                roi_30d,
-                acct_val,
-            )
-            # Still score them so we have a complete record, but with empty trades
-            trades: list[dict] = []
-            avg_leverage: float | None = None
+        if not passes_tier1(roi_30d, acct_val, thresholds=thresholds):
+            continue
+
+        tier1_count += 1
+
+        # Try cache first
+        cached = _get_cached_trades(db_path, addr, TRADE_CACHE_TTL_HOURS)
+        if cached is not None:
+            trades = cached
+            cache_hits += 1
         else:
-            # Fetch trade history (90 days)
             try:
                 trades = await client.get_perp_trades(
                     address=addr,
                     date_from=date_from_90d,
                     date_to=date_to,
                 )
+                _cache_trades(db_path, addr, trades)
             except Exception:
                 logger.warning(
                     "Failed to fetch trades for address=%s, using empty list",
@@ -999,10 +1345,59 @@ async def refresh_trader_universe(client, db_path: str) -> int:
                 )
                 trades = []
 
-            # Fetch average leverage from current positions
-            avg_leverage = await _fetch_avg_leverage(client, addr)
+        avg_leverage = await _fetch_avg_leverage(client, addr)
+        metrics = compute_trade_metrics(trades)
 
-        # Run the scoring pipeline
+        tier1_data[addr] = {
+            "trades": trades,
+            "avg_leverage": avg_leverage,
+            "metrics": metrics,
+        }
+
+    logger.info(
+        "Tier-1 passers: %d / %d (cache hits: %d)",
+        tier1_count,
+        len(merged),
+        cache_hits,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 5: Compute quality thresholds from fetched trade metrics
+    # ------------------------------------------------------------------
+    all_metrics = [d["metrics"] for d in tier1_data.values()]
+    quality_thresholds = compute_quality_thresholds(all_metrics, percentile=_percentile)
+    logger.info(
+        "Quality thresholds (p%.0f): min_trades=%.0f min_pf=%.2f "
+        "wr_range=[%.2f, %.2f]",
+        _percentile * 100,
+        quality_thresholds["min_trade_count"],
+        quality_thresholds["min_profit_factor"],
+        quality_thresholds["win_rate_min"],
+        quality_thresholds["win_rate_max"],
+    )
+
+    # ------------------------------------------------------------------
+    # Step 6: Phase 2 — Full scoring for all traders
+    # ------------------------------------------------------------------
+    scored_count = 0
+    eligible_count = 0
+    gate_tier1 = 0
+    gate_consistency = 0
+    gate_quality = 0
+    gate_style_ok = 0
+    fail_reason_counts: dict[str, int] = {}
+
+    for addr, trader in merged.items():
+        acct_val = trader.get("account_value")
+
+        # Use fetched data for tier-1 passers, empty for others
+        if addr in tier1_data:
+            trades = tier1_data[addr]["trades"]
+            avg_leverage = tier1_data[addr]["avg_leverage"]
+        else:
+            trades = []
+            avg_leverage = None
+
         score_result = score_trader(
             roi_7d=trader.get("roi_7d"),
             roi_30d=trader.get("roi_30d"),
@@ -1014,6 +1409,9 @@ async def refresh_trader_universe(client, db_path: str) -> int:
             label=trader.get("label", ""),
             trades=trades,
             avg_leverage=avg_leverage,
+            thresholds=thresholds,
+            quality_thresholds=quality_thresholds,
+            overrides=overrides,
         )
 
         # Insert score into trader_scores table
@@ -1029,8 +1427,9 @@ async def refresh_trader_universe(client, db_path: str) -> int:
                         normalized_roi, normalized_sharpe, normalized_win_rate,
                         consistency_score, smart_money_bonus, risk_mgmt_score,
                         style_multiplier, recency_decay, composite_score,
-                        passes_tier1, passes_quality, is_eligible
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        passes_tier1, passes_consistency, passes_quality,
+                        is_eligible, fail_reason
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         addr,
                         score_result["roi_7d"],
@@ -1056,28 +1455,51 @@ async def refresh_trader_universe(client, db_path: str) -> int:
                         score_result["recency_decay"],
                         score_result["composite_score"],
                         score_result["passes_tier1"],
+                        score_result["passes_consistency"],
                         score_result["passes_quality"],
                         score_result["is_eligible"],
+                        score_result["fail_reason"],
                     ),
                 )
         finally:
             conn.close()
 
         scored_count += 1
+        if score_result["passes_tier1"]:
+            gate_tier1 += 1
+        if score_result["passes_consistency"]:
+            gate_consistency += 1
+        if score_result["passes_quality"]:
+            gate_quality += 1
+        if score_result["style"] != "HFT":
+            gate_style_ok += 1
         if score_result["is_eligible"]:
             eligible_count += 1
+        if score_result["fail_reason"]:
+            for reason in score_result["fail_reason"].split(","):
+                fail_reason_counts[reason] = fail_reason_counts.get(reason, 0) + 1
 
-        logger.debug(
-            "Scored trader %s: composite=%.4f eligible=%s style=%s",
-            addr,
-            score_result["composite_score"],
-            bool(score_result["is_eligible"]),
-            score_result["style"],
+    # ------------------------------------------------------------------
+    # Step 7: Log summary with gate funnel
+    # ------------------------------------------------------------------
+    logger.info(
+        "Gate funnel: total=%d → tier1=%d → consistency=%d → quality=%d "
+        "→ style_ok=%d → eligible=%d",
+        scored_count,
+        gate_tier1,
+        gate_consistency,
+        gate_quality,
+        gate_style_ok,
+        eligible_count,
+    )
+    if fail_reason_counts:
+        sorted_reasons = sorted(
+            fail_reason_counts.items(), key=lambda x: x[1], reverse=True
         )
-
-    # ------------------------------------------------------------------
-    # Step 4: Log summary
-    # ------------------------------------------------------------------
+        logger.info(
+            "Fail reason breakdown: %s",
+            ", ".join(f"{r}={c}" for r, c in sorted_reasons),
+        )
     logger.info(
         "Scoring complete: %d traders scored, %d eligible (TOP_N=%d)",
         scored_count,
@@ -1085,7 +1507,6 @@ async def refresh_trader_universe(client, db_path: str) -> int:
         TOP_N_TRADERS,
     )
 
-    # Log the top N eligible traders by composite score
     conn = get_connection(db_path)
     try:
         rows = conn.execute(

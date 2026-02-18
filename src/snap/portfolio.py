@@ -198,6 +198,99 @@ def compute_target_portfolio(
 
 
 # ---------------------------------------------------------------------------
+# 2b. Net Opposing Targets
+# ---------------------------------------------------------------------------
+
+
+def net_opposing_targets(
+    targets: list[TargetAllocation],
+) -> list[TargetAllocation]:
+    """Net opposing Long/Short targets for the same token into a single direction.
+
+    When multiple traders hold opposite sides of the same token, the raw
+    aggregation produces both a Long and a Short ``TargetAllocation``.
+    Hyperliquid oneWay mode only supports one direction per token, so we
+    must net them before execution.
+
+    Parameters
+    ----------
+    targets:
+        Raw target allocations (may contain both sides per token).
+
+    Returns
+    -------
+    list[TargetAllocation]
+        Netted targets with at most one entry per token.
+    """
+    if not targets:
+        return targets
+
+    # Group by token_symbol
+    by_token: dict[str, list[TargetAllocation]] = {}
+    for t in targets:
+        by_token.setdefault(t.token_symbol, []).append(t)
+
+    result: list[TargetAllocation] = []
+    for token, group in by_token.items():
+        sides = {t.side for t in group}
+
+        if sides == {"Long", "Short"}:
+            # Opposing positions — net them
+            long_usd = sum(t.target_usd for t in group if t.side == "Long")
+            short_usd = sum(t.target_usd for t in group if t.side == "Short")
+            net = long_usd - short_usd
+
+            # Preserve mark_price from whichever side had the largest target
+            best = max(group, key=lambda t: t.target_usd)
+            mark_price = best.mark_price
+
+            if net > 0:
+                logger.info(
+                    "Netting %s: Long $%.2f - Short $%.2f = Long $%.2f",
+                    token, long_usd, short_usd, net,
+                )
+                result.append(
+                    TargetAllocation(
+                        token_symbol=token,
+                        side="Long",
+                        raw_weight=net,
+                        capped_weight=net,
+                        target_usd=net,
+                        target_size=net / mark_price if mark_price > 0 else 0.0,
+                        mark_price=mark_price,
+                    )
+                )
+            elif net < 0:
+                abs_net = abs(net)
+                logger.info(
+                    "Netting %s: Long $%.2f - Short $%.2f = Short $%.2f",
+                    token, long_usd, short_usd, abs_net,
+                )
+                result.append(
+                    TargetAllocation(
+                        token_symbol=token,
+                        side="Short",
+                        raw_weight=abs_net,
+                        capped_weight=abs_net,
+                        target_usd=abs_net,
+                        target_size=abs_net / mark_price if mark_price > 0 else 0.0,
+                        mark_price=mark_price,
+                    )
+                )
+            else:
+                logger.info(
+                    "Netting %s: Long $%.2f - Short $%.2f = $0 (cancelled out)",
+                    token, long_usd, short_usd,
+                )
+                # Omit — positions cancel out
+        else:
+            # Single side — pass through unchanged
+            result.extend(group)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # 3. Risk Overlay (Algorithm 4.3)
 # ---------------------------------------------------------------------------
 
@@ -205,6 +298,7 @@ def compute_target_portfolio(
 def apply_risk_overlay(
     targets: list[TargetAllocation],
     account_value: float,
+    leverage: int = MAX_LEVERAGE,
 ) -> list[TargetAllocation]:
     """Apply the 6-step sequential risk overlay to target allocations.
 
@@ -275,6 +369,10 @@ def apply_risk_overlay(
     for t in targets[MAX_TOTAL_POSITIONS:]:
         t.target_usd = 0.0
 
+    # Step 6b: Apply leverage — caps above are on margin, scale to notional
+    for t in targets:
+        t.target_usd *= leverage
+
     # Update capped_weight and target_size
     for t in targets:
         t.capped_weight = t.target_usd
@@ -332,11 +430,25 @@ def compute_rebalance_diff(
     for pos in current_positions:
         current_by_token[pos["token_symbol"]] = pos
 
-    # Index active targets by token_symbol
+    # Index active targets by token_symbol (with duplicate detection)
     target_by_token: dict[str, TargetAllocation] = {}
     for t in targets:
         if t.target_usd > 0:
-            target_by_token[t.token_symbol] = t
+            if t.token_symbol in target_by_token:
+                existing = target_by_token[t.token_symbol]
+                logger.warning(
+                    "Duplicate target for %s: existing %s $%.2f, new %s $%.2f — "
+                    "keeping larger target. Call net_opposing_targets() first.",
+                    t.token_symbol,
+                    existing.side,
+                    existing.target_usd,
+                    t.side,
+                    t.target_usd,
+                )
+                if t.target_usd > existing.target_usd:
+                    target_by_token[t.token_symbol] = t
+            else:
+                target_by_token[t.token_symbol] = t
 
     # Tokens in both targets and current positions, or only in one
     all_tokens = set(current_by_token.keys()) | set(target_by_token.keys())

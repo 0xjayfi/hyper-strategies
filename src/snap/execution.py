@@ -87,8 +87,11 @@ class PaperTradeClient(HyperliquidClient):
         Mapping of token symbol to its current mark price.
     """
 
-    def __init__(self, mark_prices: dict[str, float]) -> None:
+    def __init__(
+        self, mark_prices: dict[str, float], *, live_prices: bool = False
+    ) -> None:
         self._mark_prices = dict(mark_prices)
+        self._live_prices = live_prices
         # Track the last order for get_order_status lookups
         self._orders: dict[str, dict] = {}
 
@@ -97,6 +100,37 @@ class PaperTradeClient(HyperliquidClient):
     def set_mark_price(self, token: str, price: float) -> None:
         """Update the mark price for a token."""
         self._mark_prices[token] = price
+
+    async def refresh_mark_prices(self) -> int:
+        """Fetch live mark prices from Hyperliquid public API.
+
+        Only runs when ``live_prices=True`` was passed to the constructor.
+        Returns the number of prices updated.
+        """
+        if not self._live_prices:
+            return 0
+
+        import httpx
+
+        url = "https://api.hyperliquid.xyz/info"
+        try:
+            async with httpx.AsyncClient(timeout=10) as http:
+                resp = await http.post(url, json={"type": "metaAndAssetCtxs"})
+                resp.raise_for_status()
+            data = resp.json()
+            universe = data[0]["universe"]
+            ctxs = data[1]
+            count = 0
+            for asset, ctx in zip(universe, ctxs):
+                name = asset["name"]
+                mark = float(ctx.get("markPx", 0))
+                if mark > 0:
+                    self._mark_prices[name] = mark
+                    count += 1
+            return count
+        except Exception:
+            logger.warning("Failed to fetch Hyperliquid mark prices", exc_info=True)
+            return 0
 
     def _simulate_fill_price(
         self, token: str, side: str, order_type: str, is_close: bool
@@ -395,6 +429,10 @@ async def _execute_single_action(
     if mark_price <= 0:
         mark_price = await client.get_mark_price(token)
 
+    # Feed resolved mark price into paper client for accurate fills
+    if isinstance(client, PaperTradeClient) and mark_price > 0:
+        client.set_mark_price(token, mark_price)
+
     limit_price: float | None = None
     if order_type == "LIMIT":
         limit_price = compute_limit_price(mark_price, side, token)
@@ -527,6 +565,7 @@ async def _execute_single_action(
                 entry_price=filled_avg_price,
                 mark_price=mark_price,
                 action_type=action.action,
+                leverage=MAX_LEVERAGE,
             )
         elif action.action == "CLOSE":
             _close_position(
@@ -571,6 +610,7 @@ def _upsert_position(
     entry_price: float,
     mark_price: float,
     action_type: str,
+    leverage: int = 5,
 ) -> None:
     """Insert or update a row in our_positions for OPEN / INCREASE."""
     now = _now_utc()
@@ -605,7 +645,7 @@ def _upsert_position(
                        SET size = ?, entry_price = ?, current_price = ?,
                            position_usd = ?, stop_loss_price = ?,
                            trailing_stop_price = ?, trailing_high = ?,
-                           updated_at = ?
+                           leverage = ?, updated_at = ?
                        WHERE token_symbol = ?""",
                     (
                         new_total_size,
@@ -615,6 +655,7 @@ def _upsert_position(
                         new_stop_loss,
                         new_trailing_stop,
                         mark_price,
+                        leverage,
                         now,
                         token,
                     ),
@@ -626,8 +667,8 @@ def _upsert_position(
                        (token_symbol, side, size, entry_price, current_price,
                         position_usd, unrealized_pnl, stop_loss_price,
                         trailing_stop_price, trailing_high, opened_at,
-                        max_close_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, 0.0, ?, ?, ?, ?, ?, ?)""",
+                        max_close_at, leverage, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, 0.0, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         token,
                         side,
@@ -640,6 +681,7 @@ def _upsert_position(
                         mark_price,
                         now,
                         max_close,
+                        leverage,
                         now,
                     ),
                 )

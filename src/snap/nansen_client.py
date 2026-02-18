@@ -3,11 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
+import tempfile
 import time
+from collections import deque
+from pathlib import Path
 from typing import Any
 
 import httpx
+
+from snap.config import (
+    NANSEN_RATE_LIMIT_LEADERBOARD_MIN_INTERVAL,
+    NANSEN_RATE_LIMIT_LEADERBOARD_PER_MINUTE,
+    NANSEN_RATE_LIMIT_LEADERBOARD_PER_SECOND,
+    NANSEN_RATE_LIMIT_PROFILER_MIN_INTERVAL,
+    NANSEN_RATE_LIMIT_PROFILER_PER_MINUTE,
+    NANSEN_RATE_LIMIT_PROFILER_PER_SECOND,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +66,178 @@ _NO_RETRY_CLIENT_ERRORS = frozenset({400, 401, 403, 404, 422})
 _DEFAULT_BASE_URL = "https://api.nansen.ai/api/v1"
 _DEFAULT_TIMEOUT = 30.0
 _MAX_RETRIES = 3
-_BACKOFF_SCHEDULE = (1.0, 2.0, 4.0)  # seconds per retry attempt
+_BACKOFF_SCHEDULE = (2.0, 5.0, 15.0)  # seconds per retry attempt
 _DEFAULT_PAGE_SIZE = 100
+
+
+# ---------------------------------------------------------------------------
+# Sliding-window rate limiter
+# ---------------------------------------------------------------------------
+
+
+_DEFAULT_LEADERBOARD_STATE_FILE = "/tmp/snap_nansen_rate_state_leaderboard.json"
+_DEFAULT_PROFILER_STATE_FILE = "/tmp/snap_nansen_rate_state_profiler.json"
+
+
+class _RateLimiter:
+    """Async sliding-window rate limiter with persistent state across restarts.
+
+    Uses wall-clock time (``time.time()``) so that timestamps survive process
+    restarts.  State (recent request timestamps + cooldown deadline) is
+    persisted to a JSON file after every mutation, and loaded on init.
+
+    Every call to :meth:`acquire` blocks (via ``asyncio.sleep``) until the
+    request can be issued without violating either limit.  An
+    ``asyncio.Lock`` serialises concurrent callers so that the timestamp
+    bookkeeping stays consistent.
+    """
+
+    def __init__(
+        self,
+        per_second: int = 20,
+        per_minute: int = 300,
+        state_file: str | None = None,
+        min_interval: float = 7.0,
+    ) -> None:
+        self._per_second = per_second
+        self._per_minute = per_minute
+        self._state_file = state_file
+        self._min_interval = min_interval  # minimum seconds between any two requests
+        self._lock = asyncio.Lock()
+        # When the server returns 429, we set a cooldown deadline (wall-clock)
+        # so ALL subsequent requests wait until the server's window resets.
+        self._cooldown_until: float = 0.0
+
+        # Load persisted state from previous runs.
+        self._timestamps: deque[float] = deque()
+        self._load_state()
+
+    # -- persistence ----------------------------------------------------------
+
+    def _load_state(self) -> None:
+        """Load timestamps and cooldown from the state file, if it exists."""
+        if not self._state_file:
+            return
+        try:
+            path = Path(self._state_file)
+            if not path.exists():
+                return
+            data = json.loads(path.read_text())
+            now = time.time()
+
+            # Load timestamps within the last 60 seconds
+            saved_ts = data.get("timestamps", [])
+            cutoff = now - 60.0
+            recent = [t for t in saved_ts if isinstance(t, (int, float)) and t > cutoff]
+            self._timestamps = deque(sorted(recent))
+
+            # Load cooldown if still in effect
+            saved_cooldown = data.get("cooldown_until", 0.0)
+            if isinstance(saved_cooldown, (int, float)) and saved_cooldown > now:
+                self._cooldown_until = saved_cooldown
+
+            if self._timestamps or self._cooldown_until > now:
+                logger.info(
+                    "Rate limiter: loaded %d recent requests from previous run "
+                    "(cooldown_remaining=%.1fs)",
+                    len(self._timestamps),
+                    max(0.0, self._cooldown_until - now),
+                )
+        except Exception:
+            logger.warning("Rate limiter: failed to load state file, starting fresh", exc_info=True)
+
+    def _save_state(self) -> None:
+        """Atomically persist current timestamps and cooldown to the state file."""
+        if not self._state_file:
+            return
+        try:
+            data = {
+                "timestamps": list(self._timestamps),
+                "cooldown_until": self._cooldown_until,
+            }
+            # Atomic write: write to temp file then rename
+            dir_path = os.path.dirname(self._state_file) or "/tmp"
+            fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(data, f)
+                os.replace(tmp_path, self._state_file)
+            except Exception:
+                # Clean up temp file on failure
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        except Exception:
+            logger.debug("Rate limiter: failed to save state file", exc_info=True)
+
+    # -- public API -----------------------------------------------------------
+
+    async def notify_rate_limited(self, retry_after: float) -> None:
+        """Called when the server returns 429. Sets a global cooldown."""
+        async with self._lock:
+            deadline = time.time() + retry_after
+            if deadline > self._cooldown_until:
+                self._cooldown_until = deadline
+                logger.info(
+                    "Rate limiter: server 429 received, global cooldown for %.1fs",
+                    retry_after,
+                )
+                self._save_state()
+
+    async def acquire(self) -> None:
+        """Wait until a request slot is available, then record it."""
+        async with self._lock:
+            now = time.time()
+
+            # --- minimum interval between requests ---
+            if self._timestamps and self._min_interval > 0:
+                last_request = self._timestamps[-1]
+                gap = now - last_request
+                if gap < self._min_interval:
+                    delay = self._min_interval - gap
+                    await asyncio.sleep(delay)
+                    now = time.time()
+
+            # --- server-imposed cooldown gate ---
+            if self._cooldown_until > now:
+                delay = self._cooldown_until - now
+                logger.info("Rate limiter: cooling down for %.1fs (server 429)", delay)
+                await asyncio.sleep(delay)
+                now = time.time()
+                # Clear old timestamps after sleeping through the cooldown
+                self._timestamps.clear()
+
+            # Purge entries older than 60 s (outside the per-minute window).
+            while self._timestamps and self._timestamps[0] <= now - 60.0:
+                self._timestamps.popleft()
+
+            # --- per-minute gate ---
+            if len(self._timestamps) >= self._per_minute:
+                sleep_until = self._timestamps[0] + 60.0
+                delay = sleep_until - now
+                if delay > 0:
+                    logger.debug("Rate limiter: per-minute cap reached, sleeping %.2fs", delay)
+                    await asyncio.sleep(delay)
+                    now = time.time()
+                    while self._timestamps and self._timestamps[0] <= now - 60.0:
+                        self._timestamps.popleft()
+
+            # --- per-second gate ---
+            one_sec_ago = now - 1.0
+            recent = sum(1 for t in self._timestamps if t > one_sec_ago)
+            if recent >= self._per_second:
+                # Find the oldest timestamp within the 1-second window.
+                oldest_in_window = next(t for t in self._timestamps if t > one_sec_ago)
+                delay = oldest_in_window + 1.0 - now
+                if delay > 0:
+                    logger.debug("Rate limiter: per-second cap reached, sleeping %.3fs", delay)
+                    await asyncio.sleep(delay)
+                    now = time.time()
+
+            self._timestamps.append(now)
+            self._save_state()
 
 
 class NansenClient:
@@ -72,15 +256,28 @@ class NansenClient:
         api_key: str,
         base_url: str = _DEFAULT_BASE_URL,
         timeout: float = _DEFAULT_TIMEOUT,
+        leaderboard_state_file: str | None = _DEFAULT_LEADERBOARD_STATE_FILE,
+        profiler_state_file: str | None = _DEFAULT_PROFILER_STATE_FILE,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout),
             headers={"apiKey": api_key, "Content-Type": "application/json"},
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
-        # Rate-limiter state: timestamp of last request completion.
-        self._last_request_time: float = 0.0
+        self._leaderboard_limiter = _RateLimiter(
+            per_second=NANSEN_RATE_LIMIT_LEADERBOARD_PER_SECOND,
+            per_minute=NANSEN_RATE_LIMIT_LEADERBOARD_PER_MINUTE,
+            state_file=leaderboard_state_file,
+            min_interval=NANSEN_RATE_LIMIT_LEADERBOARD_MIN_INTERVAL,
+        )
+        self._profiler_limiter = _RateLimiter(
+            per_second=NANSEN_RATE_LIMIT_PROFILER_PER_SECOND,
+            per_minute=NANSEN_RATE_LIMIT_PROFILER_PER_MINUTE,
+            state_file=profiler_state_file,
+            min_interval=NANSEN_RATE_LIMIT_PROFILER_MIN_INTERVAL,
+        )
 
     # -- async context manager ------------------------------------------------
 
@@ -123,6 +320,11 @@ class NansenClient:
             retries exhausted.
         """
         url = f"{self._base_url}{endpoint}"
+        limiter = (
+            self._profiler_limiter
+            if endpoint.startswith("/profiler")
+            else self._leaderboard_limiter
+        )
         last_exc: Exception | None = None
 
         for attempt in range(_MAX_RETRIES):
@@ -135,8 +337,8 @@ class NansenClient:
             )
 
             try:
+                await limiter.acquire()
                 response = await self._client.post(url, json=payload)
-                self._last_request_time = time.monotonic()
             except httpx.HTTPError as exc:
                 # Network-level errors (timeout, connection reset, etc.)
                 last_exc = exc
@@ -178,7 +380,7 @@ class NansenClient:
                 )
                 raise NansenAPIError(status_code=status, message=body_text)
 
-            # --- rate limit (429): wait using Retry-After or backoff ---
+            # --- rate limit (429): notify limiter and wait ---
             if status == 429:
                 retry_after = _parse_retry_after(response, fallback=backoff)
                 logger.warning(
@@ -187,6 +389,8 @@ class NansenClient:
                     endpoint,
                     retry_after,
                 )
+                # Set a cooldown on the limiter that triggered the 429
+                await limiter.notify_rate_limited(retry_after)
                 last_exc = NansenRateLimitError(
                     message=f"429 on attempt {attempt + 1} for {endpoint}"
                 )
@@ -230,11 +434,18 @@ class NansenClient:
         self,
         endpoint: str,
         base_payload: dict[str, Any],
+        *,
+        max_pages: int = 0,
     ) -> list[dict[str, Any]]:
         """Paginate through all pages of *endpoint*, accumulating ``data`` items.
 
         The caller supplies a *base_payload* which may already contain a
         ``pagination`` key (it will be overwritten by this method).
+
+        Parameters
+        ----------
+        max_pages
+            Stop after this many pages (0 = unlimited).
 
         Returns
         -------
@@ -271,6 +482,13 @@ class NansenClient:
             )
 
             if is_last_page:
+                break
+
+            if max_pages and page >= max_pages:
+                logger.debug(
+                    "Paginate endpoint=%s hit max_pages=%d, stopping with %d items",
+                    endpoint, max_pages, len(all_items),
+                )
                 break
 
             page += 1
@@ -341,8 +559,10 @@ class NansenClient:
         address: str,
         date_from: str,
         date_to: str,
+        *,
+        max_pages: int = 10,
     ) -> list[dict[str, Any]]:
-        """Fetch full paginated perp trade history for an address.
+        """Fetch paginated perp trade history for an address.
 
         Parameters
         ----------
@@ -350,6 +570,8 @@ class NansenClient:
             Trader wallet address (``0x...``).
         date_from, date_to:
             Date strings in ``YYYY-MM-DD`` format.
+        max_pages:
+            Cap on pages fetched (default 10 = ~1000 trades). 0 = unlimited.
 
         Returns
         -------
@@ -362,7 +584,9 @@ class NansenClient:
             "address": address,
             "date": {"from": date_from, "to": date_to},
         }
-        return await self._paginate("/profiler/perp-trades", base_payload)
+        return await self._paginate(
+            "/profiler/perp-trades", base_payload, max_pages=max_pages,
+        )
 
     # -- lifecycle ------------------------------------------------------------
 

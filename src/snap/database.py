@@ -64,8 +64,10 @@ CREATE TABLE IF NOT EXISTS trader_scores (
     composite_score         REAL,
     -- eligibility
     passes_tier1            INTEGER,
+    passes_consistency      INTEGER,
     passes_quality          INTEGER,
-    is_eligible             INTEGER
+    is_eligible             INTEGER,
+    fail_reason             TEXT
 );
 """
 
@@ -171,6 +173,7 @@ CREATE TABLE IF NOT EXISTS our_positions (
     trailing_high       REAL,
     opened_at           TEXT,
     max_close_at        TEXT,
+    leverage            REAL DEFAULT 5.0,
     updated_at          TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 """
@@ -265,4 +268,8 @@ def init_db(db_path: str | Path) -> sqlite3.Connection:
     with conn:
         for stmt in _ALL_STATEMENTS:
             conn.execute(stmt)
+        # Migrate: add leverage column to our_positions if missing (pre-TUI DBs)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(our_positions)").fetchall()}
+        if "leverage" not in cols:
+            conn.execute("ALTER TABLE our_positions ADD COLUMN leverage REAL DEFAULT 5.0")
     return conn

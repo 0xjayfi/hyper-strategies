@@ -6,9 +6,13 @@ Tests cover:
 - Maximum retry exhaustion raising appropriate exceptions
 - Auth errors (401) NOT being retried
 - Bad request errors (400) NOT being retried
+- Proactive rate limiting (per-second and per-minute sliding windows)
 """
 
 from __future__ import annotations
+
+import asyncio
+import time
 
 import pytest
 import httpx
@@ -19,6 +23,7 @@ from snap.nansen_client import (
     NansenAPIError,
     NansenRateLimitError,
     NansenAuthError,
+    _RateLimiter,
 )
 
 BASE_URL = "https://api.nansen.ai/api/v1"
@@ -36,7 +41,12 @@ def api_key():
 
 @pytest.fixture
 async def client(api_key):
-    async with NansenClient(api_key=api_key, base_url=BASE_URL) as c:
+    async with NansenClient(
+        api_key=api_key,
+        base_url=BASE_URL,
+        leaderboard_state_file=None,
+        profiler_state_file=None,
+    ) as c:
         yield c
 
 
@@ -386,3 +396,152 @@ async def test_bad_request_no_retry(client):
     assert route.call_count == 1
     assert exc_info.value.status_code == 400
     assert "Bad Request" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# Rate limiter tests
+# ---------------------------------------------------------------------------
+
+
+async def test_rate_limiter_per_second_limit():
+    """Requests beyond per_second cap are delayed to the next 1-second window."""
+    limiter = _RateLimiter(per_second=5, per_minute=300, state_file=None)
+
+    start = time.monotonic()
+    # Fire 8 acquires: first 5 should be instant, next 3 must wait ~1 second.
+    for _ in range(8):
+        await limiter.acquire()
+    elapsed = time.monotonic() - start
+
+    # The 6th call should have waited ~1 s for the per-second window to slide.
+    assert elapsed >= 0.9, f"Expected >= 0.9s, got {elapsed:.3f}s"
+
+
+async def test_rate_limiter_per_minute_limit():
+    """When per-minute cap is hit, acquire() sleeps until the window slides."""
+    from collections import deque
+    from unittest.mock import AsyncMock, patch
+
+    limiter = _RateLimiter(per_second=100, per_minute=5, state_file=None, min_interval=0)
+
+    # Pre-fill 5 timestamps all at t=1000.0 (simulating 5 requests at the same moment).
+    base_time = 1000.0
+    limiter._timestamps = deque([base_time] * 5)
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(duration):
+        sleep_calls.append(duration)
+
+    # time.time returns base_time + 0.1 (shortly after the 5 requests).
+    # The limiter should compute a delay of ~59.9 s to wait for the minute window.
+    with patch("time.time", return_value=base_time + 0.1), \
+         patch("asyncio.sleep", side_effect=fake_sleep):
+        await limiter.acquire()
+
+    # Verify a sleep was requested for approximately 59.9 seconds.
+    assert len(sleep_calls) >= 1
+    assert sleep_calls[0] == pytest.approx(59.9, abs=0.2)
+
+
+async def test_rate_limiter_no_delay_under_limits():
+    """Requests under both limits complete without delay."""
+    limiter = _RateLimiter(per_second=20, per_minute=300, state_file=None, min_interval=0)
+
+    start = time.monotonic()
+    for _ in range(10):
+        await limiter.acquire()
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.5, f"Expected < 0.5s for 10 requests under limit, got {elapsed:.3f}s"
+
+
+async def test_rate_limiter_concurrent_access():
+    """Concurrent acquire() calls are serialised by the internal lock."""
+    limiter = _RateLimiter(per_second=5, per_minute=300, state_file=None, min_interval=0)
+    results: list[float] = []
+
+    async def acquire_and_record():
+        await limiter.acquire()
+        results.append(time.monotonic())
+
+    # Launch 10 concurrent acquires; only 5 per second allowed.
+    await asyncio.gather(*(acquire_and_record() for _ in range(10)))
+
+    assert len(results) == 10
+    # Verify that the deque has exactly 10 entries.
+    assert len(limiter._timestamps) == 10
+
+
+@respx.mock
+async def test_request_uses_leaderboard_limiter(client):
+    """Leaderboard requests use the leaderboard rate limiter."""
+    acquire_calls = 0
+    original_acquire = client._leaderboard_limiter.acquire
+
+    async def counting_acquire():
+        nonlocal acquire_calls
+        acquire_calls += 1
+        await original_acquire()
+
+    client._leaderboard_limiter.acquire = counting_acquire
+
+    mock_data = {
+        "data": [{"trader_address": "0xaaa", "total_pnl": 100, "roi": 5, "account_value": 60000}],
+        "pagination": {"page": 1, "per_page": 100, "is_last_page": True},
+    }
+    respx.post(f"{BASE_URL}/perp-leaderboard").mock(
+        return_value=httpx.Response(200, json=mock_data)
+    )
+
+    await client.get_leaderboard("2025-09-01", "2025-10-01")
+    assert acquire_calls == 1
+
+
+@respx.mock
+async def test_request_uses_profiler_limiter(client):
+    """Profiler requests use the profiler rate limiter."""
+    acquire_calls = 0
+    original_acquire = client._profiler_limiter.acquire
+
+    async def counting_acquire():
+        nonlocal acquire_calls
+        acquire_calls += 1
+        await original_acquire()
+
+    client._profiler_limiter.acquire = counting_acquire
+
+    mock_data = {
+        "data": {
+            "asset_positions": [],
+            "margin_summary_account_value_usd": "100000.0",
+        }
+    }
+    respx.post(f"{BASE_URL}/profiler/perp-positions").mock(
+        return_value=httpx.Response(200, json=mock_data)
+    )
+
+    await client.get_perp_positions("0xabc123")
+    assert acquire_calls == 1
+
+
+async def test_backoff_schedule():
+    """Backoff schedule uses conservative values for rate-limited API."""
+    from snap.nansen_client import _BACKOFF_SCHEDULE
+
+    assert _BACKOFF_SCHEDULE == (2.0, 5.0, 15.0)
+
+
+async def test_httpx_connection_limits():
+    """NansenClient configures httpx connection pool limits."""
+    async with NansenClient(
+        api_key="test-key",
+        base_url=BASE_URL,
+        leaderboard_state_file=None,
+        profiler_state_file=None,
+    ) as c:
+        transport = c._client._transport
+        # The default httpx transport stores pool limits on the underlying pool.
+        pool = transport._pool
+        assert pool._max_connections == 10
+        assert pool._max_keepalive_connections == 5
