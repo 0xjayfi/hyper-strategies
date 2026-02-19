@@ -1149,6 +1149,58 @@ def _read_trades_from_db(db_path: str, address: str) -> list[dict]:
         conn.close()
 
 
+def _backfill_roi_from_trades(db_path: str, merged: dict[str, dict]) -> None:
+    """Estimate ROI fields from trade_history when the traders table has NULLs.
+
+    For each trader with ``roi_30d is None``, sums ``closed_pnl`` from
+    ``trade_history`` within the 7d/30d/90d windows and divides by
+    ``account_value`` to produce an approximate ROI percentage.
+
+    Modifies *merged* in-place.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    cutoffs = {
+        "7d": (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "30d": (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "90d": (now - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+    conn = get_connection(db_path)
+    try:
+        for addr, trader in merged.items():
+            if trader.get("roi_30d") is not None:
+                continue
+
+            acct_val = trader.get("account_value") or 0.0
+            if acct_val <= 0:
+                continue
+
+            for label, cutoff in cutoffs.items():
+                row = conn.execute(
+                    """SELECT COALESCE(SUM(closed_pnl), 0) AS total_pnl
+                       FROM trade_history
+                       WHERE address = ? AND timestamp >= ?""",
+                    (addr, cutoff),
+                ).fetchone()
+                total_pnl = row["total_pnl"] if row else 0.0
+                roi = (total_pnl / acct_val) * 100.0  # as percentage
+                trader[f"roi_{label}"] = roi
+                trader[f"pnl_{label}"] = total_pnl
+    finally:
+        conn.close()
+
+    backfilled = sum(
+        1 for t in merged.values() if t.get("roi_30d") is not None
+    )
+    logger.info(
+        "Backfilled ROI from trades: %d/%d traders now have roi_30d",
+        backfilled,
+        len(merged),
+    )
+
+
 def score_from_cache(
     db_path: str,
     overrides: dict | None = None,
@@ -1196,6 +1248,23 @@ def score_from_cache(
     if not merged:
         logger.warning("score_from_cache: no traders in DB, nothing to score")
         return []
+
+    # ------------------------------------------------------------------
+    # Step 1b: Backfill ROI from trade history when leaderboard ROI is missing
+    # ------------------------------------------------------------------
+    # Older data DBs may have NULL roi_* fields because the collector
+    # didn't store leaderboard ROI at the time.  Estimate ROI from the
+    # sum of closed_pnl in trade_history relative to account_value.
+    roi_missing = sum(
+        1 for t in merged.values() if t.get("roi_30d") is None
+    )
+    if roi_missing > len(merged) * 0.5:
+        logger.info(
+            "score_from_cache: %d/%d traders missing roi_30d, backfilling from trade history",
+            roi_missing,
+            len(merged),
+        )
+        _backfill_roi_from_trades(db_path, merged)
 
     # ------------------------------------------------------------------
     # Step 2: Compute dynamic thresholds from the population
