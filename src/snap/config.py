@@ -136,6 +136,8 @@ HEALTH_CHECK_FILE: str = os.environ.get("SNAP_HEALTH_FILE", "/tmp/snap_health.js
 # ===========================================================================
 PAPER_TRADE: bool = os.environ.get("SNAP_PAPER_TRADE", "true").lower() in ("true", "1", "yes")
 DB_PATH: str = os.environ.get("SNAP_DB_PATH", "snap.db")
+DATA_DB_PATH: str = os.environ.get("SNAP_DATA_DB_PATH", "")
+STRATEGY_DB_PATH: str = os.environ.get("SNAP_STRATEGY_DB_PATH", "")
 ACCOUNT_VALUE: float = float(os.environ.get("SNAP_ACCOUNT_VALUE", "10000"))
 LOG_FILE: str | None = os.environ.get("SNAP_LOG_FILE")
 DASHBOARD_FILE: str | None = os.environ.get("SNAP_DASHBOARD_FILE")

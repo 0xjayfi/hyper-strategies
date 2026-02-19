@@ -26,8 +26,11 @@ src/snap/
   scheduler.py       # Async tick-based scheduler with state machine and graceful shutdown
   observability.py   # Structured JSON logging, metrics, alerts, dashboard export
   audit.py           # Graduation verification (risk cap audit, stop trigger checks)
-  tui.py             # Terminal UI display (rich tables for portfolio, scores, status)
-  main.py            # CLI entry point with interactive command loop
+  collector.py       # Data-only collection (leaderboard + trades, no scoring/trading)
+  variants.py        # Scoring strategy variants (V1-V5) for grid search and live runs
+  tui.py             # Classic Rich-based terminal UI (tables, status bar)
+  tui_app.py         # Textual TUI application (onboarding wizard + live dashboard)
+  main.py            # CLI entry point, routes to Textual TUI or classic mode
 ```
 
 ## Setup
@@ -49,27 +52,86 @@ NANSEN_API_KEY=your_api_key_here
 
 ## Usage
 
+### CLI Arguments
+
 ```bash
-# Paper trading (default)
+# Launch the Textual TUI (default) with onboarding wizard
 snap
 
-# With custom settings
+# Use the classic Rich-based TUI (no onboarding wizard, stdin command loop)
+snap --classic
+
+# Custom database and account value
 snap --db-path ./data/snap.db --account-value 10000
+
+# Split databases: separate data ingestion from strategy state
+snap --data-db ./data/nansen.db --strategy-db ./data/strategy.db
 
 # Live mode (sends real orders to Hyperliquid)
 snap --live --account-value 5000
 ```
 
-On launch, Snap displays a status bar and portfolio summary. The scheduler runs automatically in the background while you interact via keyboard commands:
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--live` | off | Enable live trading (mutually exclusive with `--paper`) |
+| `--paper` | on | Paper-trade mode (default when neither flag given) |
+| `--db-path` | `snap.db` | SQLite database path (used when data/strategy are the same DB) |
+| `--data-db` | same as `--db-path` | Separate DB for Nansen data (traders, trades, positions) |
+| `--strategy-db` | same as `--db-path` | Separate DB for strategy state (scores, orders, system state) |
+| `--account-value` | `10000` | Starting account value in USD |
+| `--log-file` | none | Optional log file path |
+| `--dashboard-file` | none | Optional dashboard JSON output path |
+| `--health-file` | `/tmp/snap_health.json` | Health check file for liveness probes |
+| `--classic` | off | Use the classic Rich-based TUI instead of the Textual interface |
+
+### Textual TUI (Default)
+
+On launch, the Textual TUI walks through a 4-step onboarding wizard:
+
+1. **Welcome** - Overview of the system workflow and scoring parameters
+2. **Strategy** - Choose a scoring variant (V1-V5), with live parameter preview
+3. **Start Stage** - Pick where to begin the pipeline:
+   - **Collect Data Only** - Fetch leaderboard and trade data without scoring or trading
+   - **Fresh Start (Daily Flow)** - Full pipeline from scratch
+   - **From Rebalancing** - Skip trader refresh, use existing scores
+   - **Monitor Only** - Only check stops on existing positions
+4. **Configuration** - Adjust account value, rebalance interval, max hold time, monitor interval, max positions
+
+After onboarding, the main dashboard displays a fixed-layout grid with:
+- **Status bar** - Mode, strategy variant, account value, scheduler state, session uptime, data freshness, countdown to next rebalance/refresh
+- **Portfolio panel** - Live positions with entry/live price, PnL, leverage, margin, sparkline trend
+- **Scores panel** - Top 15 eligible traders ranked by composite score
+- **Log panel** - Streaming system logs with color-coded severity
+
+Dashboard keyboard bindings:
 
 | Key | Action |
 |-----|--------|
 | `r` | Refresh trader universe (fetch leaderboard, score, rank) |
 | `b` | Run rebalance cycle (snapshot, target, risk overlay, execute) |
 | `m` | Run monitor pass (check stops on all positions) |
-| `s` | Show trader scores table (top 15 by composite score) |
-| `p` | Show portfolio table (positions, PnL, leverage, margin) |
-| `q` | Graceful shutdown (also responds to Ctrl+C / SIGTERM) |
+| `s` | Refresh scores table |
+| `p` | Refresh portfolio table |
+| `v` | Cycle to next scoring variant (re-scores from cache, no API calls) |
+| `q` | Graceful shutdown |
+
+### Classic TUI (`--classic`)
+
+The classic mode uses Rich tables printed to stdout with a stdin command loop. Same keybindings as above (except `v`), entered as single characters followed by Enter.
+
+### Scoring Variants
+
+Five scoring strategy variants are available, selectable during onboarding or cycled live with `v`:
+
+| Variant | Label | Description |
+|---------|-------|-------------|
+| V1 | Baseline | Median filter cutoffs, balanced scoring weights |
+| V2 | Quality Focused | 65th percentile filter, 45%+ win rate, 3.0+ profit factor |
+| V3 | Volume Relaxed | 35th percentile, accepts 25%+ win rate, wider net |
+| V4 | ROI Heavy | 35% ROI + 30% Sharpe weight, favors outsized returns |
+| V5 | Hybrid Balanced | 45th percentile, 0.9 position multiplier, steady exposure |
+
+Switching variants re-scores traders from cached data instantly without additional API calls.
 
 ### Environment Variables
 
@@ -78,6 +140,8 @@ On launch, Snap displays a status bar and portfolio summary. The scheduler runs 
 | `NANSEN_API_KEY` | (required) | Nansen API key |
 | `SNAP_PAPER_TRADE` | `true` | Paper trade mode toggle |
 | `SNAP_DB_PATH` | `snap.db` | SQLite database path |
+| `SNAP_DATA_DB_PATH` | (none) | Separate data DB path (overrides `--data-db`) |
+| `SNAP_STRATEGY_DB_PATH` | (none) | Separate strategy DB path (overrides `--strategy-db`) |
 | `SNAP_ACCOUNT_VALUE` | `10000` | Starting account value in USD |
 | `SNAP_LOG_FILE` | (none) | Optional log file path |
 | `SNAP_DASHBOARD_FILE` | (none) | Optional dashboard JSON output path |

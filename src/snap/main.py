@@ -32,13 +32,15 @@ import sys
 from snap.config import (
     ACCOUNT_VALUE,
     DASHBOARD_FILE,
+    DATA_DB_PATH,
     DB_PATH,
     HEALTH_CHECK_FILE,
     LOG_FILE,
     NANSEN_API_KEY,
     PAPER_TRADE,
+    STRATEGY_DB_PATH,
 )
-from snap.database import init_db
+from snap.database import init_data_db, init_db, init_strategy_db
 from snap.execution import PaperTradeClient
 from snap.nansen_client import NansenClient
 from snap.observability import (
@@ -85,6 +87,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"SQLite database path (default: {DB_PATH})",
     )
     parser.add_argument(
+        "--data-db",
+        default=DATA_DB_PATH or None,
+        help="Data DB path (defaults to --db-path)",
+    )
+    parser.add_argument(
+        "--strategy-db",
+        default=STRATEGY_DB_PATH or None,
+        help="Strategy DB path (defaults to --db-path)",
+    )
+    parser.add_argument(
         "--account-value",
         type=float,
         default=ACCOUNT_VALUE,
@@ -120,16 +132,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         else:
             args.live = True
 
+    # Resolve data/strategy DB paths (default to --db-path)
+    args.data_db = args.data_db or args.db_path
+    args.strategy_db = args.strategy_db or args.db_path
+
     return args
 
 
 def _print_status(scheduler: SystemScheduler, args: argparse.Namespace) -> None:
     """Print the status bar with current scheduler state."""
     mode = "PAPER" if not args.live else "LIVE"
-    acct_str = get_system_state(args.db_path, "account_value")
+    acct_str = get_system_state(args.strategy_db, "account_value")
     acct_val = float(acct_str) if acct_str else args.account_value
-    last_refresh = get_system_state(args.db_path, "last_trader_refresh_at")
-    last_rebalance = get_system_state(args.db_path, "last_rebalance_at")
+    last_refresh = get_system_state(args.strategy_db, "last_trader_refresh_at")
+    last_rebalance = get_system_state(args.strategy_db, "last_rebalance_at")
 
     panel = render_status_bar(
         state=scheduler.state.value,
@@ -178,9 +194,9 @@ async def _input_loop(
             await scheduler._run_monitor()
             _print_status(scheduler, args)
         elif key == "s":
-            print_scores(args.db_path)
+            print_scores(args.strategy_db)
         elif key == "p":
-            print_portfolio(args.db_path)
+            print_portfolio(args.strategy_db)
         else:
             console.print(f"[dim]Unknown command: {key!r}[/]")
             console.print(f"[dim]{_COMMANDS_HELP}[/]")
@@ -197,9 +213,10 @@ async def run(args: argparse.Namespace) -> None:
     setup_json_logging(log_file=args.log_file)
 
     logger.info(
-        "Starting Snap system: mode=%s db=%s account_value=%.0f",
+        "Starting Snap system: mode=%s data_db=%s strategy_db=%s account_value=%.0f",
         "PAPER" if paper_mode else "LIVE",
-        args.db_path,
+        args.data_db,
+        args.strategy_db,
         args.account_value,
     )
 
@@ -211,12 +228,18 @@ async def run(args: argparse.Namespace) -> None:
         logger.error("NANSEN_API_KEY not set. Export it or add to .env file.")
         sys.exit(1)
 
-    # 3. Initialize database
-    conn = init_db(args.db_path)
-    conn.close()
+    # 3. Initialize database(s)
+    if args.data_db != args.strategy_db:
+        conn = init_data_db(args.data_db)
+        conn.close()
+        conn = init_strategy_db(args.strategy_db)
+        conn.close()
+    else:
+        conn = init_db(args.db_path)
+        conn.close()
 
-    # 4. Set initial account value
-    set_system_state(args.db_path, "account_value", str(args.account_value))
+    # 4. Set initial account value (strategy DB)
+    set_system_state(args.strategy_db, "account_value", str(args.account_value))
 
     # 5. Create exchange client
     if paper_mode:
@@ -236,7 +259,8 @@ async def run(args: argparse.Namespace) -> None:
     scheduler = SystemScheduler(
         client=client,
         nansen_client=nansen_client,
-        db_path=args.db_path,
+        db_path=args.data_db,
+        strategy_db_path=args.strategy_db,
     )
     scheduler.recover_state()
 
@@ -258,11 +282,11 @@ async def run(args: argparse.Namespace) -> None:
         loop.add_signal_handler(sig, _signal_handler)
 
     # 9. Write initial health check
-    write_health_check(args.db_path, health_file=args.health_file)
+    write_health_check(args.strategy_db, health_file=args.health_file)
 
     # 10. Print startup banner
     _print_status(scheduler, args)
-    print_portfolio(args.db_path)
+    print_portfolio(args.strategy_db)
     console.print(f"\n[bold]{_COMMANDS_HELP}[/]\n")
 
     # 11. Run scheduler + input loop concurrently
@@ -276,11 +300,15 @@ async def run(args: argparse.Namespace) -> None:
     finally:
         # Final health check and dashboard export
         try:
-            write_health_check(args.db_path, health_file=args.health_file)
+            write_health_check(args.strategy_db, health_file=args.health_file)
             if args.dashboard_file:
-                export_dashboard(args.db_path, output_path=args.dashboard_file)
+                export_dashboard(
+                    args.strategy_db,
+                    output_path=args.dashboard_file,
+                    data_db_path=args.data_db,
+                )
 
-            metrics = collect_metrics(args.db_path)
+            metrics = collect_metrics(args.strategy_db, data_db_path=args.data_db)
             alerts = check_alerts(metrics)
             if alerts:
                 emit_alerts(alerts)
@@ -299,7 +327,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         from snap.tui_app import SnapApp
 
-        app = SnapApp(db_path=args.db_path)
+        app = SnapApp(db_path=args.strategy_db, data_db_path=args.data_db)
         app.run()
 
 

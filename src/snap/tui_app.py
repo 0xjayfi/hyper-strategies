@@ -40,7 +40,7 @@ from snap.config import (
     REBALANCE_INTERVAL_HOURS,
 )
 from snap.database import get_connection
-from snap.variants import VARIANT_DESCRIPTIONS, VARIANT_LABELS, VARIANTS
+from snap.variants import VARIANT_DESCRIPTIONS, VARIANT_LABELS, VARIANTS, format_variant_details
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ OnboardingStrategy #strategy-container RadioSet {
 
 OnboardingStrategy #strategy-container #description-box {
     height: auto;
-    min-height: 5;
+    min-height: 14;
     padding: 1;
     border: tall $primary;
     margin: 0 0 1 0;
@@ -475,7 +475,7 @@ class OnboardingStrategy(Screen):
                     label = f"{key}: {VARIANT_LABELS[key]}"
                     yield RadioButton(label, value=key == self.ob_config.variant_key)
             yield Static(
-                VARIANT_DESCRIPTIONS.get(self.ob_config.variant_key, ""),
+                format_variant_details(self.ob_config.variant_key),
                 id="description-box",
             )
             with Horizontal(id="btn-row"):
@@ -488,7 +488,7 @@ class OnboardingStrategy(Screen):
             key = _VARIANT_KEYS[idx]
             self.ob_config.variant_key = key
             desc_widget = self.query_one("#description-box", Static)
-            desc_widget.update(VARIANT_DESCRIPTIONS.get(key, ""))
+            desc_widget.update(format_variant_details(key))
 
     @on(Button.Pressed, "#btn-next")
     def _go_next(self, event: Button.Pressed) -> None:
@@ -500,6 +500,7 @@ class OnboardingStrategy(Screen):
 # ---------------------------------------------------------------------------
 
 _STAGES = [
+    ("collect", "Collect Data Only", "Fetch leaderboard and trade data from Nansen API without scoring or trading. Use this to pre-cache data for strategy experiments."),
     ("daily", "Fresh Start (Daily Flow)", "Run the full pipeline from the beginning: fetch leaderboard, score traders, then rebalance and monitor."),
     ("rebalance", "From Rebalancing", "Skip trader refresh. Assumes traders are already scored in the database. Starts from position snapshot and rebalancing."),
     ("monitor", "Monitor Only", "Skip both refresh and rebalance. Only run the position monitor loop to check stop-loss and trailing stops on existing positions."),
@@ -668,8 +669,9 @@ class OnboardingOptions(Screen):
 
 _STATE_COLORS: dict[str, str] = {
     "IDLE": "dim",
-    "REFRESHING": "yellow",
+    "REFRESHING_TRADERS": "yellow",
     "REBALANCING": "cyan",
+    "INGESTING_TRADES": "blue",
     "MONITORING": "green",
     "SHUTTING_DOWN": "red",
 }
@@ -738,6 +740,7 @@ class DashboardScreen(Screen):
         Binding("m", "monitor", "Monitor"),
         Binding("s", "show_scores", "Refresh Scores"),
         Binding("p", "show_portfolio", "Refresh Portfolio"),
+        Binding("v", "switch_variant", "Switch Variant"),
         Binding("q", "quit_app", "Quit"),
     ]
 
@@ -750,6 +753,10 @@ class DashboardScreen(Screen):
         self._last_refresh_time: datetime | None = None
         self._current_state: str = "IDLE"
         self._pnl_history: dict[str, list[float]] = {}
+        self._trader_count: int = 0
+        self._data_age_str: str = "no data"
+        self._last_data_check: datetime | None = None
+        self._session_start: datetime = datetime.now(timezone.utc)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -760,6 +767,7 @@ class DashboardScreen(Screen):
             f"[black on yellow] PAPER [/]  │  Strategy: {self.ob_config.variant_key} ({variant_label})  │  "
             f"Acct: ${self.ob_config.account_value:,.0f}  │  "
             f"State: [dim]IDLE[/]  │  "
+            f"Data: loading...  │  "
             f"Rebal: {self.ob_config.rebalance_interval_hours}h  │  "
             f"Hold: {self.ob_config.max_hold_hours}h"
         )
@@ -771,7 +779,7 @@ class DashboardScreen(Screen):
             yield DataTable(id="portfolio-table")
 
         with Vertical(id="scores-panel"):
-            yield Static(" Trader Scores (Top 15)", classes="panel-title")
+            yield Static(" Eligible Traders", classes="panel-title")
             yield DataTable(id="scores-table")
 
         # Row 3: Log panel (full width, bottom strip)
@@ -789,7 +797,7 @@ class DashboardScreen(Screen):
 
         # Set up scores table columns
         stable = self.query_one("#scores-table", DataTable)
-        stable.add_columns("#", "Address", "Score", "Style", "ROI 30d", "WR", "PF", "Trades", "Elig")
+        stable.add_columns("#", "Address", "Score", "Style", "ROI 30d", "WR", "PF", "Trades")
         stable.cursor_type = "row"
 
         # Install log handler
@@ -802,12 +810,18 @@ class DashboardScreen(Screen):
         root_logger.addHandler(self._log_handler)
         root_logger.setLevel(logging.INFO)
 
-        # Run DB migration before loading data (adds leverage column if missing)
-        from snap.database import init_db
+        # Run DB migration before loading data
+        from snap.database import init_data_db, init_db, init_strategy_db
 
         try:
-            conn = init_db(self.app.db_path)
-            conn.close()
+            if self.app.data_db_path != self.app.db_path:
+                conn = init_data_db(self.app.data_db_path)
+                conn.close()
+                conn = init_strategy_db(self.app.db_path)
+                conn.close()
+            else:
+                conn = init_db(self.app.db_path)
+                conn.close()
         except Exception as e:
             log_view.write(Text(f"DB init error: {e}", style="bold red"))
 
@@ -820,11 +834,13 @@ class DashboardScreen(Screen):
             style="bold",
         ))
 
+        self._refresh_data_freshness()
         self._load_portfolio()
         self._load_scores()
 
         # Periodic countdown refresh
         self.set_interval(30, self._tick_status)
+        self.set_interval(60, self._load_portfolio)
 
         self.notify("Dashboard ready", title="SNAP", severity="information")
 
@@ -931,20 +947,55 @@ class DashboardScreen(Screen):
 
         try:
             db_path = self.app.db_path
+            data_db_path = self.app.data_db_path
             conn = get_connection(db_path)
             try:
-                rows = conn.execute(
-                    """SELECT ts.address, t.label, ts.composite_score, ts.style,
-                              ts.roi_30d, ts.win_rate, ts.profit_factor, ts.trade_count,
-                              ts.is_eligible
-                       FROM trader_scores ts
-                       JOIN traders t ON ts.address = t.address
-                       WHERE ts.id IN (
-                           SELECT MAX(id) FROM trader_scores GROUP BY address
-                       )
-                       ORDER BY ts.composite_score DESC
-                       LIMIT 15"""
-                ).fetchall()
+                if data_db_path != db_path:
+                    # Two-DB mode: query separately and join in Python
+                    score_rows = conn.execute(
+                        """SELECT address, composite_score, style,
+                                  roi_30d, win_rate, profit_factor, trade_count
+                           FROM trader_scores
+                           WHERE is_eligible = 1 AND id IN (
+                               SELECT MAX(id) FROM trader_scores GROUP BY address
+                           )
+                           ORDER BY composite_score DESC
+                           LIMIT 15"""
+                    ).fetchall()
+                    data_conn = get_connection(data_db_path)
+                    try:
+                        labels = {}
+                        for r in data_conn.execute(
+                            "SELECT address, label FROM traders"
+                        ).fetchall():
+                            labels[r["address"]] = r["label"]
+                    finally:
+                        data_conn.close()
+                    rows = [
+                        {
+                            "address": r["address"],
+                            "label": labels.get(r["address"], ""),
+                            "composite_score": r["composite_score"],
+                            "style": r["style"],
+                            "roi_30d": r["roi_30d"],
+                            "win_rate": r["win_rate"],
+                            "profit_factor": r["profit_factor"],
+                            "trade_count": r["trade_count"],
+                        }
+                        for r in score_rows
+                    ]
+                else:
+                    rows = conn.execute(
+                        """SELECT ts.address, t.label, ts.composite_score, ts.style,
+                                  ts.roi_30d, ts.win_rate, ts.profit_factor, ts.trade_count
+                           FROM trader_scores ts
+                           JOIN traders t ON ts.address = t.address
+                           WHERE ts.is_eligible = 1 AND ts.id IN (
+                               SELECT MAX(id) FROM trader_scores GROUP BY address
+                           )
+                           ORDER BY ts.composite_score DESC
+                           LIMIT 15"""
+                    ).fetchall()
             finally:
                 conn.close()
 
@@ -959,7 +1010,6 @@ class DashboardScreen(Screen):
                 wr = r["win_rate"] or 0.0
                 pf = r["profit_factor"] or 0.0
                 trades = r["trade_count"] or 0
-                eligible = r["is_eligible"]
 
                 # Top-3 rank styling
                 if i == 1:
@@ -980,7 +1030,6 @@ class DashboardScreen(Screen):
                     score_cell = Text(f"{score:.3f}", style="dim")
 
                 roi_style = "green" if roi >= 0 else "red"
-                elig_text = Text("Y", style="green") if eligible else Text("N", style="dim")
 
                 stable.add_row(
                     rank_cell,
@@ -991,16 +1040,49 @@ class DashboardScreen(Screen):
                     f"{wr:.0%}",
                     f"{pf:.1f}",
                     str(trades),
-                    elig_text,
                 )
 
             if not rows:
                 stable.add_row(
-                    Text("No scores yet — press 'r' to refresh traders", style="dim italic"),
-                    "", "", "", "", "", "", "", "",
+                    Text("No eligible traders yet — press 'r' to refresh", style="dim italic"),
+                    "", "", "", "", "", "", "",
                 )
         except Exception as e:
             logger.warning("Scores load failed: %s", e)
+
+    def _refresh_data_freshness(self) -> None:
+        """Query DB for trader count and last update time."""
+        try:
+            conn = get_connection(self.app.data_db_path)
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(*) as cnt, MAX(updated_at) as last_update FROM traders"
+                ).fetchone()
+            finally:
+                conn.close()
+
+            self._trader_count = row["cnt"] if row["cnt"] else 0
+            last_update = row["last_update"]
+            if last_update:
+                try:
+                    dt = datetime.strptime(last_update, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                    age = datetime.now(timezone.utc) - dt
+                    hours = int(age.total_seconds() / 3600)
+                    if hours < 1:
+                        mins = int(age.total_seconds() / 60)
+                        self._data_age_str = f"{self._trader_count} traders ({mins}m ago)"
+                    elif hours < 24:
+                        self._data_age_str = f"{self._trader_count} traders ({hours}h ago)"
+                    else:
+                        days = hours // 24
+                        self._data_age_str = f"{self._trader_count} traders ({days}d ago)"
+                except (ValueError, TypeError):
+                    self._data_age_str = f"{self._trader_count} traders"
+            else:
+                self._data_age_str = "no data"
+            self._last_data_check = datetime.now(timezone.utc)
+        except Exception:
+            pass  # Don't crash the status bar over a DB error
 
     def _update_status(self, state: str = "IDLE") -> None:
         """Update the status bar text with live countdowns."""
@@ -1009,6 +1091,16 @@ class DashboardScreen(Screen):
         state_color = _STATE_COLORS.get(state, "dim")
 
         now = datetime.now(timezone.utc)
+
+        # Refresh data freshness every 5 minutes
+        if self._last_data_check is None or (now - self._last_data_check).total_seconds() > 300:
+            self._refresh_data_freshness()
+
+        # Session uptime
+        elapsed = now - self._session_start
+        elapsed_h = int(elapsed.total_seconds() // 3600)
+        elapsed_m = int((elapsed.total_seconds() % 3600) // 60)
+        session_str = f"{elapsed_h}h {elapsed_m:02d}m"
 
         # Compute next rebalance countdown
         if self._last_rebalance_time is not None:
@@ -1019,7 +1111,9 @@ class DashboardScreen(Screen):
             else:
                 hours, rem = divmod(int(remaining.total_seconds()), 3600)
                 minutes = rem // 60
-                rebal_str = f"{hours}h {minutes:02d}m"
+                eta = now + remaining
+                eta_str = eta.strftime("%H:%M UTC")
+                rebal_str = f"{hours}h {minutes:02d}m (~{eta_str})"
         else:
             rebal_str = "pending"
 
@@ -1032,7 +1126,9 @@ class DashboardScreen(Screen):
             else:
                 hours, rem = divmod(int(remaining.total_seconds()), 3600)
                 minutes = rem // 60
-                refresh_str = f"{hours}h {minutes:02d}m"
+                eta = now + remaining
+                eta_str = eta.strftime("%H:%M UTC")
+                refresh_str = f"{hours}h {minutes:02d}m (~{eta_str})"
         else:
             refresh_str = "pending"
 
@@ -1040,6 +1136,8 @@ class DashboardScreen(Screen):
             f"[black on yellow] PAPER [/]  │  Strategy: {self.ob_config.variant_key} ({variant_label})  │  "
             f"Acct: ${self.ob_config.account_value:,.0f}  │  "
             f"State: [{state_color}]{state}[/]  │  "
+            f"Session: {session_str}  │  "
+            f"Data: {self._data_age_str}  │  "
             f"Next rebal: {rebal_str}  │  "
             f"Next refresh: {refresh_str}"
         )
@@ -1047,6 +1145,23 @@ class DashboardScreen(Screen):
 
     def _tick_status(self) -> None:
         """Periodic callback to refresh the status bar countdown."""
+        if self.scheduler and hasattr(self.scheduler, "state"):
+            new_state = self.scheduler.state.value
+            if new_state != self._current_state:
+                old = self._current_state
+                self._current_state = new_state
+                if new_state == "REBALANCING":
+                    logger.info("Rebalance cycle started (auto-scheduled)")
+                    self.notify("Rebalancing in progress...", title="Rebalance", severity="information")
+                elif new_state == "IDLE" and old == "REBALANCING":
+                    logger.info("Rebalance cycle finished")
+                    self._last_rebalance_time = datetime.now(timezone.utc)
+                    self._load_portfolio()
+                    self._load_scores()
+                elif new_state == "IDLE" and old == "REFRESHING_TRADERS":
+                    self._last_refresh_time = datetime.now(timezone.utc)
+                    self._last_data_check = None
+                    self._load_scores()
         self._update_status(self._current_state)
 
     # -- Scheduler integration -----------------------------------------------
@@ -1055,18 +1170,25 @@ class DashboardScreen(Screen):
     async def _start_scheduler(self) -> None:
         """Initialize and start the system scheduler based on onboarding config."""
         from snap.config import NANSEN_API_KEY
-        from snap.database import init_db
+        from snap.database import init_data_db, init_db, init_strategy_db
         from snap.execution import PaperTradeClient
         from snap.nansen_client import NansenClient
         from snap.scheduler import SystemScheduler, set_system_state
 
         db_path = self.app.db_path
+        data_db_path = self.app.data_db_path
 
-        # Initialize DB
-        conn = init_db(db_path)
-        conn.close()
+        # Initialize DBs
+        if data_db_path != db_path:
+            conn = init_data_db(data_db_path)
+            conn.close()
+            conn = init_strategy_db(db_path)
+            conn.close()
+        else:
+            conn = init_db(db_path)
+            conn.close()
 
-        # Set account value
+        # Set account value (in strategy DB)
         set_system_state(db_path, "account_value", str(self.ob_config.account_value))
 
         if not NANSEN_API_KEY:
@@ -1077,10 +1199,40 @@ class DashboardScreen(Screen):
         client = PaperTradeClient(mark_prices={}, live_prices=True)
         nansen_client = NansenClient(api_key=NANSEN_API_KEY)
 
+        if self.ob_config.start_stage == "collect":
+            # Collection-only mode: fetch data, don't start scheduler
+            logger.info("Running data collection only (no trading)")
+            try:
+                from snap.collector import collect_trader_data
+                summary = await collect_trader_data(nansen_client, data_db_path)
+                logger.info("Collection complete: %s", summary)
+                self.notify(
+                    f"Traders: {summary.traders_fetched} | "
+                    f"Trades: {summary.trades_fetched} new, {summary.trades_cached} cached | "
+                    f"Errors: {summary.errors} | "
+                    f"Duration: {summary.duration_seconds:.0f}s",
+                    title="Collection Complete",
+                    severity="information",
+                )
+            except Exception as e:
+                logger.exception("Collection failed")
+                self.notify(f"Collection failed: {e}", title="Error", severity="error")
+            finally:
+                await nansen_client.close()
+
+            # Refresh the display with collected data
+            self._load_scores()
+            self._load_portfolio()
+            return  # Don't start the scheduler loop
+
+        variant_overrides = VARIANTS.get(self.ob_config.variant_key)
+
         scheduler = SystemScheduler(
             client=client,
             nansen_client=nansen_client,
-            db_path=db_path,
+            db_path=data_db_path,
+            strategy_db_path=db_path,
+            scoring_overrides=variant_overrides,
         )
         scheduler.recover_state()
         self.scheduler = scheduler
@@ -1139,6 +1291,7 @@ class DashboardScreen(Screen):
         if self.scheduler:
             await self.scheduler._run_trader_refresh()
             self._last_refresh_time = datetime.now(timezone.utc)
+            self._last_data_check = None  # Force data freshness update
             self._update_status("IDLE")
             self._load_scores()
             self._load_portfolio()
@@ -1154,6 +1307,7 @@ class DashboardScreen(Screen):
         if self.scheduler:
             await self.scheduler._run_rebalance()
             self._last_rebalance_time = datetime.now(timezone.utc)
+            self._last_data_check = None  # Force data freshness update
             self._update_status("IDLE")
             self._load_portfolio()
             self.notify("Rebalance cycle complete", title="Rebalance", severity="information")
@@ -1177,6 +1331,46 @@ class DashboardScreen(Screen):
     def action_show_portfolio(self) -> None:
         self._load_portfolio()
 
+    def action_switch_variant(self) -> None:
+        """Cycle to the next scoring variant and re-score from cache."""
+        cur = self.ob_config.variant_key
+        idx = (_VARIANT_KEYS.index(cur) + 1) % len(_VARIANT_KEYS)
+        new_key = _VARIANT_KEYS[idx]
+
+        self.ob_config.variant_key = new_key
+        new_overrides = VARIANTS[new_key]
+
+        # Update scheduler if running
+        if self.scheduler:
+            self.scheduler.set_scoring_overrides(new_overrides)
+
+        # Re-score from cache (fast, no API calls)
+        self._rescore_variant(new_key, new_overrides)
+
+    @work(thread=False)
+    async def _rescore_variant(self, variant_key: str, overrides: dict) -> None:
+        """Re-score from cached data with new variant overrides."""
+        from snap.scoring import score_from_cache
+
+        try:
+            eligible = score_from_cache(
+                self.app.data_db_path,
+                overrides=overrides,
+                strategy_db_path=self.app.db_path,
+            )
+            label = VARIANT_LABELS.get(variant_key, "?")
+            self._update_status(self._current_state)
+            self._load_scores()
+            self.notify(
+                f"Switched to {variant_key} ({label}) — {len(eligible)} eligible",
+                title="Variant Changed",
+                severity="information",
+            )
+            logger.info("Variant switched to %s (%s): %d eligible", variant_key, label, len(eligible))
+        except Exception as e:
+            logger.exception("Failed to re-score with variant %s", variant_key)
+            self.notify(f"Re-score failed: {e}", title="Error", severity="error")
+
     def action_quit_app(self) -> None:
         if self.scheduler:
             self.scheduler.request_shutdown()
@@ -1196,9 +1390,12 @@ class SnapApp(App):
     CSS = APP_CSS
     BINDINGS = [Binding("q", "quit", "Quit", show=True)]
 
-    def __init__(self, db_path: str = "snap.db", **kwargs) -> None:
+    def __init__(
+        self, db_path: str = "snap.db", *, data_db_path: str | None = None, **kwargs
+    ) -> None:
         super().__init__(**kwargs)
-        self.db_path = db_path
+        self.db_path = db_path  # strategy DB
+        self.data_db_path = data_db_path or db_path  # data DB
         self._onboarding_config = OnboardingConfig()
 
     def on_mount(self) -> None:

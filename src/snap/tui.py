@@ -144,26 +144,75 @@ def render_portfolio_table(db_path: str) -> Table:
     return table
 
 
-def render_scores_table(db_path: str) -> Table:
+def render_scores_table(
+    db_path: str, *, data_db_path: str | None = None
+) -> Table:
     """Query latest trader_scores joined with traders, top 15 by score.
 
     Columns: Rank, Address (short 0x...abcd), Score, Style, ROI 30d,
     Win Rate, PF, Trades, Eligible
+
+    Parameters
+    ----------
+    db_path:
+        Path to the strategy database (or single combined DB).
+    data_db_path:
+        Optional path to the data database.  When provided, the
+        ``traders`` table is read from this DB and joined in Python.
     """
     conn = get_connection(db_path)
     try:
-        rows = conn.execute(
-            """SELECT ts.address, t.label, ts.composite_score, ts.style,
-                      ts.roi_30d, ts.win_rate, ts.profit_factor, ts.trade_count,
-                      ts.is_eligible
-               FROM trader_scores ts
-               JOIN traders t ON ts.address = t.address
-               WHERE ts.id IN (
-                   SELECT MAX(id) FROM trader_scores GROUP BY address
-               )
-               ORDER BY ts.composite_score DESC
-               LIMIT 15"""
-        ).fetchall()
+        if data_db_path and data_db_path != db_path:
+            # Two-DB mode: query separately and join in Python
+            score_rows = conn.execute(
+                """SELECT address, composite_score, style,
+                          roi_30d, win_rate, profit_factor, trade_count,
+                          is_eligible
+                   FROM trader_scores
+                   WHERE id IN (
+                       SELECT MAX(id) FROM trader_scores GROUP BY address
+                   )
+                   ORDER BY composite_score DESC
+                   LIMIT 15"""
+            ).fetchall()
+            data_conn = get_connection(data_db_path)
+            try:
+                labels = {}
+                for r in data_conn.execute(
+                    "SELECT address, label FROM traders"
+                ).fetchall():
+                    labels[r["address"]] = r["label"]
+            finally:
+                data_conn.close()
+            rows = [
+                {
+                    "address": r["address"],
+                    "label": labels.get(r["address"], ""),
+                    "composite_score": r["composite_score"],
+                    "style": r["style"],
+                    "roi_30d": r["roi_30d"],
+                    "win_rate": r["win_rate"],
+                    "profit_factor": r["profit_factor"],
+                    "trade_count": r["trade_count"],
+                    "is_eligible": r["is_eligible"],
+                }
+                for r in score_rows
+            ]
+        else:
+            rows = [
+                dict(r) for r in conn.execute(
+                    """SELECT ts.address, t.label, ts.composite_score, ts.style,
+                              ts.roi_30d, ts.win_rate, ts.profit_factor, ts.trade_count,
+                              ts.is_eligible
+                       FROM trader_scores ts
+                       JOIN traders t ON ts.address = t.address
+                       WHERE ts.id IN (
+                           SELECT MAX(id) FROM trader_scores GROUP BY address
+                       )
+                       ORDER BY ts.composite_score DESC
+                       LIMIT 15"""
+                ).fetchall()
+            ]
     finally:
         conn.close()
 

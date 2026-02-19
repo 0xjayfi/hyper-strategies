@@ -14,7 +14,7 @@ import sqlite3
 
 import pytest
 
-from snap.database import init_db, get_connection
+from snap.database import init_data_db, init_db, init_strategy_db, get_connection
 
 # The 9 expected tables from the spec
 EXPECTED_TABLES = {
@@ -22,6 +22,21 @@ EXPECTED_TABLES = {
     "trader_scores",
     "position_snapshots",
     "trade_history",
+    "target_allocations",
+    "orders",
+    "our_positions",
+    "pnl_ledger",
+    "system_state",
+}
+
+EXPECTED_DATA_TABLES = {
+    "traders",
+    "trade_history",
+    "position_snapshots",
+}
+
+EXPECTED_STRATEGY_TABLES = {
+    "trader_scores",
     "target_allocations",
     "orders",
     "our_positions",
@@ -125,6 +140,12 @@ def test_traders_table_schema(tmp_path):
         "address",
         "label",
         "account_value",
+        "roi_7d",
+        "roi_30d",
+        "roi_90d",
+        "pnl_7d",
+        "pnl_30d",
+        "pnl_90d",
         "first_seen_at",
         "blacklisted",
         "blacklist_reason",
@@ -223,3 +244,119 @@ def test_our_positions_has_leverage_column(tmp_path):
     lev_col = columns["leverage"]
     assert lev_col[2] == "REAL"  # type
     assert lev_col[4] == "5.0"  # default value
+
+
+# ===========================================================================
+# Two-Database Architecture Tests
+# ===========================================================================
+
+
+def test_init_data_db_creates_only_data_tables(tmp_path):
+    """init_data_db creates only data tables (traders, trade_history, position_snapshots)."""
+    db_path = str(tmp_path / "data.db")
+    conn = init_data_db(db_path)
+
+    table_names = _get_table_names(conn)
+    conn.close()
+
+    assert table_names == EXPECTED_DATA_TABLES
+
+
+def test_init_strategy_db_creates_only_strategy_tables(tmp_path):
+    """init_strategy_db creates only strategy tables."""
+    db_path = str(tmp_path / "strategy.db")
+    conn = init_strategy_db(db_path)
+
+    table_names = _get_table_names(conn)
+    conn.close()
+
+    assert table_names == EXPECTED_STRATEGY_TABLES
+
+
+def test_init_data_db_idempotent(tmp_path):
+    """Calling init_data_db twice is safe."""
+    db_path = str(tmp_path / "data.db")
+    conn1 = init_data_db(db_path)
+    tables1 = _get_table_names(conn1)
+    conn1.close()
+
+    conn2 = init_data_db(db_path)
+    tables2 = _get_table_names(conn2)
+    conn2.close()
+
+    assert tables1 == tables2 == EXPECTED_DATA_TABLES
+
+
+def test_init_strategy_db_idempotent(tmp_path):
+    """Calling init_strategy_db twice is safe."""
+    db_path = str(tmp_path / "strategy.db")
+    conn1 = init_strategy_db(db_path)
+    tables1 = _get_table_names(conn1)
+    conn1.close()
+
+    conn2 = init_strategy_db(db_path)
+    tables2 = _get_table_names(conn2)
+    conn2.close()
+
+    assert tables1 == tables2 == EXPECTED_STRATEGY_TABLES
+
+
+def test_data_and_strategy_tables_are_disjoint():
+    """Data and strategy table sets have no overlap."""
+    assert EXPECTED_DATA_TABLES & EXPECTED_STRATEGY_TABLES == set()
+
+
+def test_data_plus_strategy_equals_all():
+    """Data tables + strategy tables = all tables."""
+    assert EXPECTED_DATA_TABLES | EXPECTED_STRATEGY_TABLES == EXPECTED_TABLES
+
+
+def test_init_data_db_in_memory():
+    """init_data_db works with in-memory database."""
+    conn = init_data_db(":memory:")
+    tables = _get_table_names(conn)
+    conn.close()
+    assert tables == EXPECTED_DATA_TABLES
+
+
+def test_init_strategy_db_in_memory():
+    """init_strategy_db works with in-memory database."""
+    conn = init_strategy_db(":memory:")
+    tables = _get_table_names(conn)
+    conn.close()
+    assert tables == EXPECTED_STRATEGY_TABLES
+
+
+def test_strategy_db_has_leverage_column(tmp_path):
+    """init_strategy_db creates our_positions with leverage column."""
+    db_path = str(tmp_path / "strategy.db")
+    conn = init_strategy_db(db_path)
+
+    cursor = conn.execute("PRAGMA table_info(our_positions);")
+    columns = {row[1] for row in cursor.fetchall()}
+    conn.close()
+
+    assert "leverage" in columns
+
+
+def test_trader_scores_no_fk_constraint(tmp_path):
+    """trader_scores address column has no FK to traders (cross-DB safe)."""
+    db_path = str(tmp_path / "strategy.db")
+    conn = init_strategy_db(db_path)
+
+    # Should be able to insert a score without a corresponding traders row
+    conn.execute(
+        """INSERT INTO trader_scores (address, composite_score, is_eligible)
+           VALUES (?, ?, ?)""",
+        ("0xNONEXISTENT", 0.5, 1),
+    )
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT address FROM trader_scores WHERE address = ?",
+        ("0xNONEXISTENT",),
+    ).fetchone()
+    conn.close()
+
+    assert row is not None
+    assert row[0] == "0xNONEXISTENT"

@@ -156,8 +156,18 @@ def verify_stop_triggers(db_path: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def compare_paper_pnl(db_path: str) -> dict[str, Any]:
+def compare_paper_pnl(
+    db_path: str, *, data_db_path: str | None = None
+) -> dict[str, Any]:
     """Compare our paper-trade PnL against tracked traders' actual performance.
+
+    Parameters
+    ----------
+    db_path:
+        Path to the strategy database (or single combined DB).
+    data_db_path:
+        Optional path to the data database.  When provided, the
+        ``traders`` table is read from this DB and joined in Python.
 
     Returns our realized PnL summary and trader ROI for comparison.
     """
@@ -186,15 +196,43 @@ def compare_paper_pnl(db_path: str) -> dict[str, Any]:
         our_return_pct = (our_net_pnl / account_value * 100) if account_value > 0 else 0.0
 
         # Tracked traders' ROI from scores
-        trader_rows = conn.execute(
-            """SELECT ts.address, t.label, ts.roi_30d, ts.composite_score
-               FROM trader_scores ts
-               JOIN traders t ON t.address = ts.address
-               WHERE ts.is_eligible = 1
-               ORDER BY ts.composite_score DESC
-               LIMIT 15"""
-        ).fetchall()
-        trader_summary = [dict(r) for r in trader_rows]
+        if data_db_path and data_db_path != db_path:
+            # Two-DB mode: query separately and join in Python
+            score_rows = conn.execute(
+                """SELECT address, roi_30d, composite_score
+                   FROM trader_scores
+                   WHERE is_eligible = 1
+                   ORDER BY composite_score DESC
+                   LIMIT 15"""
+            ).fetchall()
+            data_conn = get_connection(data_db_path)
+            try:
+                labels = {}
+                for row in data_conn.execute(
+                    "SELECT address, label FROM traders"
+                ).fetchall():
+                    labels[row["address"]] = row["label"]
+            finally:
+                data_conn.close()
+            trader_summary = [
+                {
+                    "address": r["address"],
+                    "label": labels.get(r["address"], ""),
+                    "roi_30d": r["roi_30d"],
+                    "composite_score": r["composite_score"],
+                }
+                for r in score_rows
+            ]
+        else:
+            trader_rows = conn.execute(
+                """SELECT ts.address, t.label, ts.roi_30d, ts.composite_score
+                   FROM trader_scores ts
+                   JOIN traders t ON t.address = ts.address
+                   WHERE ts.is_eligible = 1
+                   ORDER BY ts.composite_score DESC
+                   LIMIT 15"""
+            ).fetchall()
+            trader_summary = [dict(r) for r in trader_rows]
         avg_trader_roi = (
             sum(t["roi_30d"] or 0.0 for t in trader_summary) / len(trader_summary)
             if trader_summary else 0.0
@@ -228,16 +266,25 @@ def compare_paper_pnl(db_path: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def generate_audit_report(db_path: str) -> str:
+def generate_audit_report(
+    db_path: str, *, data_db_path: str | None = None
+) -> str:
     """Generate a comprehensive markdown audit report.
 
     Combines risk cap audit, stop trigger verification, and PnL comparison.
+
+    Parameters
+    ----------
+    db_path:
+        Path to the strategy database (or single combined DB).
+    data_db_path:
+        Optional path to the data database for ``traders`` queries.
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     caps = audit_risk_caps(db_path)
     stops = verify_stop_triggers(db_path)
-    pnl = compare_paper_pnl(db_path)
+    pnl = compare_paper_pnl(db_path, data_db_path=data_db_path)
 
     lines = [
         "# Snap Paper Trading Audit Report",

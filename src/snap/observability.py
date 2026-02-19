@@ -104,8 +104,18 @@ def setup_json_logging(
 # ---------------------------------------------------------------------------
 
 
-def collect_metrics(db_path: str) -> dict[str, Any]:
+def collect_metrics(
+    db_path: str, *, data_db_path: str | None = None
+) -> dict[str, Any]:
     """Gather current system metrics by querying the database.
+
+    Parameters
+    ----------
+    db_path:
+        Path to the strategy database (or single combined DB).
+    data_db_path:
+        Optional path to the data database.  When provided, the
+        ``traders.blacklisted`` count is read from this DB instead.
 
     Returns a dict with keys matching the observability spec (Section 8.1).
     """
@@ -217,10 +227,15 @@ def collect_metrics(db_path: str) -> dict[str, Any]:
         ).fetchone()
         metrics["traders.tracked_count"] = tracked_row["cnt"]
 
-        blacklisted_row = conn.execute(
-            "SELECT COUNT(*) AS cnt FROM traders WHERE blacklisted = 1"
-        ).fetchone()
-        metrics["traders.blacklisted_count"] = blacklisted_row["cnt"]
+        data_conn = get_connection(data_db_path) if data_db_path else conn
+        try:
+            blacklisted_row = data_conn.execute(
+                "SELECT COUNT(*) AS cnt FROM traders WHERE blacklisted = 1"
+            ).fetchone()
+            metrics["traders.blacklisted_count"] = blacklisted_row["cnt"]
+        finally:
+            if data_db_path:
+                data_conn.close()
 
         # -- Stop metrics (from pnl_ledger) --
         for reason in ("STOP_LOSS", "TRAILING_STOP", "TIME_STOP"):
@@ -414,22 +429,26 @@ def emit_alerts(alerts: list[Alert]) -> None:
 def export_dashboard(
     db_path: str,
     output_path: str | None = None,
+    *,
+    data_db_path: str | None = None,
 ) -> dict[str, Any]:
     """Generate a JSON snapshot for external dashboard consumption.
 
     Parameters
     ----------
     db_path:
-        Path to the SQLite database.
+        Path to the strategy database (or single combined DB).
     output_path:
         If provided, write the JSON snapshot to this file path.
+    data_db_path:
+        Optional path to the data database for ``traders`` queries.
 
     Returns
     -------
     dict
         The complete dashboard snapshot.
     """
-    metrics = collect_metrics(db_path)
+    metrics = collect_metrics(db_path, data_db_path=data_db_path)
     alerts = check_alerts(metrics)
 
     # Enrich with position details
@@ -471,6 +490,8 @@ def export_dashboard(
 def write_health_check(
     db_path: str,
     health_file: str = HEALTH_CHECK_FILE,
+    *,
+    data_db_path: str | None = None,
 ) -> dict[str, Any]:
     """Write a health-check JSON file for liveness/readiness probes.
 
@@ -480,9 +501,12 @@ def write_health_check(
     Parameters
     ----------
     db_path:
-        Path to the SQLite database.
+        Path to the strategy database (or single combined DB).
     health_file:
         Path to write the health JSON file (default from config).
+    data_db_path:
+        Optional path to the data database (unused currently, reserved
+        for future health checks on data freshness).
 
     Returns
     -------

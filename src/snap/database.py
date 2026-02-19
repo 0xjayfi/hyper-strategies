@@ -4,9 +4,18 @@ Implements all 9 tables from Section 3 of the specification, adapted for
 SQLite (INTEGER PRIMARY KEY AUTOINCREMENT instead of SERIAL, CURRENT_TIMESTAMP
 instead of NOW(), TEXT for booleans stored as 0/1).
 
+Supports a two-database architecture:
+- **Data DB**: ``traders``, ``trade_history``, ``position_snapshots`` —
+  collected market data, shared across strategies.
+- **Strategy DB**: ``trader_scores``, ``target_allocations``, ``orders``,
+  ``our_positions``, ``pnl_ledger``, ``system_state`` —
+  per-strategy scoring, portfolio, and execution state.
+
 Public API:
-    get_connection(db_path)  - Returns a sqlite3.Connection with WAL mode.
-    init_db(db_path)         - Creates all tables and indexes if they don't exist.
+    get_connection(db_path)    - Returns a sqlite3.Connection with WAL mode.
+    init_db(db_path)           - Creates all tables and indexes (single-DB mode).
+    init_data_db(db_path)      - Creates only data tables + migrations.
+    init_strategy_db(db_path)  - Creates only strategy tables + migrations.
 """
 
 from __future__ import annotations
@@ -23,6 +32,12 @@ CREATE TABLE IF NOT EXISTS traders (
     address             TEXT PRIMARY KEY,
     label               TEXT,
     account_value       REAL,
+    roi_7d              REAL,
+    roi_30d             REAL,
+    roi_90d             REAL,
+    pnl_7d              REAL,
+    pnl_30d             REAL,
+    pnl_90d             REAL,
     first_seen_at       TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     blacklisted         INTEGER DEFAULT 0,
     blacklist_reason    TEXT,
@@ -34,7 +49,7 @@ CREATE TABLE IF NOT EXISTS traders (
 _CREATE_TRADER_SCORES = """
 CREATE TABLE IF NOT EXISTS trader_scores (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-    address                 TEXT NOT NULL REFERENCES traders(address),
+    address                 TEXT NOT NULL,
     scored_at               TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     -- raw metrics
     roi_7d                  REAL,
@@ -202,20 +217,29 @@ CREATE TABLE IF NOT EXISTS system_state (
 );
 """
 
-# Ordered list of all DDL statements
-_ALL_STATEMENTS: list[str] = [
+# ---------------------------------------------------------------------------
+# Grouped DDL: Data DB vs Strategy DB
+# ---------------------------------------------------------------------------
+
+_DATA_STATEMENTS: list[str] = [
     _CREATE_TRADERS,
-    _CREATE_TRADER_SCORES,
-    _CREATE_TRADER_SCORES_INDEX,
+    _CREATE_TRADE_HISTORY,
     _CREATE_POSITION_SNAPSHOTS,
     _CREATE_POSITION_SNAPSHOTS_INDEX,
-    _CREATE_TRADE_HISTORY,
+]
+
+_STRATEGY_STATEMENTS: list[str] = [
+    _CREATE_TRADER_SCORES,
+    _CREATE_TRADER_SCORES_INDEX,
     _CREATE_TARGET_ALLOCATIONS,
     _CREATE_ORDERS,
     _CREATE_OUR_POSITIONS,
     _CREATE_PNL_LEDGER,
     _CREATE_SYSTEM_STATE,
 ]
+
+# Ordered list of all DDL statements (single-DB compat)
+_ALL_STATEMENTS: list[str] = _DATA_STATEMENTS + _STRATEGY_STATEMENTS
 
 
 # ---------------------------------------------------------------------------
@@ -268,8 +292,72 @@ def init_db(db_path: str | Path) -> sqlite3.Connection:
     with conn:
         for stmt in _ALL_STATEMENTS:
             conn.execute(stmt)
-        # Migrate: add leverage column to our_positions if missing (pre-TUI DBs)
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(our_positions)").fetchall()}
-        if "leverage" not in cols:
-            conn.execute("ALTER TABLE our_positions ADD COLUMN leverage REAL DEFAULT 5.0")
+        _migrate_our_positions(conn)
+        _migrate_traders(conn)
     return conn
+
+
+def init_data_db(db_path: str | Path) -> sqlite3.Connection:
+    """Create only the data tables (traders, trade_history, position_snapshots).
+
+    Use this when running the two-database architecture where collected
+    market data lives in a separate database from strategy state.
+
+    Parameters
+    ----------
+    db_path:
+        Filesystem path to the data database file, or `":memory:"`.
+
+    Returns
+    -------
+    sqlite3.Connection
+    """
+    conn = get_connection(db_path)
+    with conn:
+        for stmt in _DATA_STATEMENTS:
+            conn.execute(stmt)
+        _migrate_traders(conn)
+    return conn
+
+
+def init_strategy_db(db_path: str | Path) -> sqlite3.Connection:
+    """Create only the strategy tables (scores, allocations, orders, etc.).
+
+    Use this when running the two-database architecture where per-strategy
+    state lives in a separate database from collected market data.
+
+    Parameters
+    ----------
+    db_path:
+        Filesystem path to the strategy database file, or `":memory:"`.
+
+    Returns
+    -------
+    sqlite3.Connection
+    """
+    conn = get_connection(db_path)
+    with conn:
+        for stmt in _STRATEGY_STATEMENTS:
+            conn.execute(stmt)
+        _migrate_our_positions(conn)
+    return conn
+
+
+# ---------------------------------------------------------------------------
+# Internal migration helpers
+# ---------------------------------------------------------------------------
+
+
+def _migrate_our_positions(conn: sqlite3.Connection) -> None:
+    """Add leverage column to our_positions if missing (pre-TUI DBs)."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(our_positions)").fetchall()}
+    if "leverage" not in cols:
+        conn.execute("ALTER TABLE our_positions ADD COLUMN leverage REAL DEFAULT 5.0")
+
+
+def _migrate_traders(conn: sqlite3.Connection) -> None:
+    """Add roi/pnl columns to traders if missing (pre-collector DBs)."""
+    trader_cols = {r[1] for r in conn.execute("PRAGMA table_info(traders)").fetchall()}
+    for col in ("roi_7d", "roi_30d", "roi_90d", "pnl_7d", "pnl_30d", "pnl_90d"):
+        if col not in trader_cols:
+            conn.execute(f"ALTER TABLE traders ADD COLUMN {col} REAL")

@@ -1087,7 +1087,275 @@ def _cache_trades(db_path: str, address: str, trades: list[dict]) -> None:
 
 
 # ===========================================================================
-# 12. Trader Universe Refresh Orchestrator (Agent 2)
+# 12. Cache-Based Scoring (no API calls)
+# ===========================================================================
+
+
+def _read_traders_from_db(db_path: str) -> dict[str, dict]:
+    """Read all traders from the ``traders`` table and return as merged dict.
+
+    Returns the same address-keyed dict format that
+    ``_fetch_and_merge_leaderboard()`` produces, so downstream scoring
+    functions work unchanged.
+    """
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute(
+            """SELECT address, label, account_value,
+                      roi_7d, roi_30d, roi_90d,
+                      pnl_7d, pnl_30d, pnl_90d
+               FROM traders
+               WHERE blacklisted = 0 OR blacklisted IS NULL"""
+        ).fetchall()
+    finally:
+        conn.close()
+
+    merged: dict[str, dict] = {}
+    for row in rows:
+        addr = row["address"]
+        merged[addr] = {
+            "address": addr,
+            "label": row["label"] or "",
+            "account_value": row["account_value"] or 0.0,
+            "roi_7d": row["roi_7d"],
+            "roi_30d": row["roi_30d"],
+            "roi_90d": row["roi_90d"],
+            "pnl_7d": row["pnl_7d"],
+            "pnl_30d": row["pnl_30d"],
+            "pnl_90d": row["pnl_90d"],
+        }
+    return merged
+
+
+def _read_trades_from_db(db_path: str, address: str) -> list[dict]:
+    """Read all cached trades for *address* from ``trade_history``.
+
+    Unlike ``_get_cached_trades`` this ignores the TTL — it returns
+    everything in the table for the address, since the collector is
+    responsible for keeping data fresh.
+    """
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute(
+            """SELECT token_symbol, action, side, size, price, value_usd,
+                      closed_pnl, fee_usd, timestamp
+               FROM trade_history
+               WHERE address = ?
+               ORDER BY timestamp""",
+            (address,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def score_from_cache(
+    db_path: str,
+    overrides: dict | None = None,
+    *,
+    strategy_db_path: str | None = None,
+) -> list[dict]:
+    """Score all traders using only cached data from SQLite. No API calls.
+
+    1. Read merged traders from ``traders`` table.
+    2. Compute percentile-based tier-1 thresholds from cached population.
+    3. Identify tier-1 passers.
+    4. Read cached trades from ``trade_history`` table.
+    5. Compute trade metrics for tier-1 passers.
+    6. Compute quality thresholds from tier-1 metrics.
+    7. Score ALL traders -> insert into ``trader_scores``.
+    8. Return list of eligible traders sorted by composite_score DESC.
+
+    Parameters
+    ----------
+    db_path:
+        Filesystem path to the data database (reads ``traders`` and
+        ``trade_history``).  In single-DB mode this is also used for writes.
+    overrides:
+        Optional dict of parameter overrides (from grid search variants).
+        Same keys as ``refresh_trader_universe``.
+    strategy_db_path:
+        Optional path to the strategy database where ``trader_scores``
+        are written.  When ``None``, falls back to *db_path*.
+
+    Returns
+    -------
+    list[dict]
+        Eligible traders sorted by composite_score descending. Each dict
+        contains all ``trader_scores`` fields plus the ``address`` key.
+    """
+    ovr = overrides or {}
+    _percentile_val = ovr.get("FILTER_PERCENTILE", FILTER_PERCENTILE)
+
+    # ------------------------------------------------------------------
+    # Step 1: Read traders from cache
+    # ------------------------------------------------------------------
+    merged = _read_traders_from_db(db_path)
+    logger.info("score_from_cache: %d traders read from DB", len(merged))
+
+    if not merged:
+        logger.warning("score_from_cache: no traders in DB, nothing to score")
+        return []
+
+    # ------------------------------------------------------------------
+    # Step 2: Compute dynamic thresholds from the population
+    # ------------------------------------------------------------------
+    thresholds = compute_thresholds(merged, percentile=_percentile_val)
+    logger.info(
+        "score_from_cache thresholds (p%.0f): roi_30d=%.4f%% acct=%.0f",
+        _percentile_val * 100,
+        thresholds["roi_30d"],
+        thresholds["account_value"],
+    )
+
+    # ------------------------------------------------------------------
+    # Step 3: Identify tier-1 passers and load their trades
+    # ------------------------------------------------------------------
+    tier1_data: dict[str, dict] = {}
+    tier1_count = 0
+
+    for addr, trader in merged.items():
+        roi_30d = trader.get("roi_30d")
+        acct_val = trader.get("account_value")
+
+        if not passes_tier1(roi_30d, acct_val, thresholds=thresholds):
+            continue
+
+        tier1_count += 1
+
+        # Read trades from DB (no API call)
+        trades = _read_trades_from_db(db_path, addr)
+        metrics = compute_trade_metrics(trades)
+
+        tier1_data[addr] = {
+            "trades": trades,
+            "avg_leverage": None,  # no positions API in cache-only mode
+            "metrics": metrics,
+        }
+
+    logger.info(
+        "score_from_cache: %d tier-1 passers / %d total",
+        tier1_count,
+        len(merged),
+    )
+
+    # ------------------------------------------------------------------
+    # Step 4: Compute quality thresholds from tier-1 trade metrics
+    # ------------------------------------------------------------------
+    all_metrics = [d["metrics"] for d in tier1_data.values()]
+    quality_thresholds = compute_quality_thresholds(
+        all_metrics, percentile=_percentile_val
+    )
+    logger.info(
+        "score_from_cache quality thresholds (p%.0f): min_trades=%.0f "
+        "min_pf=%.2f wr_range=[%.2f, %.2f]",
+        _percentile_val * 100,
+        quality_thresholds["min_trade_count"],
+        quality_thresholds["min_profit_factor"],
+        quality_thresholds["win_rate_min"],
+        quality_thresholds["win_rate_max"],
+    )
+
+    # ------------------------------------------------------------------
+    # Step 5: Score ALL traders and insert into trader_scores
+    # ------------------------------------------------------------------
+    scored_count = 0
+    eligible_count = 0
+    eligible_traders: list[dict] = []
+
+    conn = get_connection(strategy_db_path or db_path)
+    try:
+        with conn:
+            for addr, trader in merged.items():
+                # Use fetched trade data for tier-1 passers, empty for others
+                if addr in tier1_data:
+                    trades = tier1_data[addr]["trades"]
+                    avg_leverage = tier1_data[addr]["avg_leverage"]
+                else:
+                    trades = []
+                    avg_leverage = None
+
+                score_result = score_trader(
+                    roi_7d=trader.get("roi_7d"),
+                    roi_30d=trader.get("roi_30d"),
+                    roi_90d=trader.get("roi_90d"),
+                    pnl_7d=trader.get("pnl_7d"),
+                    pnl_30d=trader.get("pnl_30d"),
+                    pnl_90d=trader.get("pnl_90d"),
+                    account_value=trader.get("account_value"),
+                    label=trader.get("label", ""),
+                    trades=trades,
+                    avg_leverage=avg_leverage,
+                    thresholds=thresholds,
+                    quality_thresholds=quality_thresholds,
+                    overrides=overrides,
+                )
+
+                conn.execute(
+                    """INSERT INTO trader_scores (
+                        address, roi_7d, roi_30d, roi_90d,
+                        pnl_7d, pnl_30d, pnl_90d,
+                        win_rate, profit_factor, pseudo_sharpe, trade_count,
+                        avg_hold_hours, trades_per_day, style,
+                        normalized_roi, normalized_sharpe, normalized_win_rate,
+                        consistency_score, smart_money_bonus, risk_mgmt_score,
+                        style_multiplier, recency_decay, composite_score,
+                        passes_tier1, passes_consistency, passes_quality,
+                        is_eligible, fail_reason
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        addr,
+                        score_result["roi_7d"],
+                        score_result["roi_30d"],
+                        score_result["roi_90d"],
+                        score_result["pnl_7d"],
+                        score_result["pnl_30d"],
+                        score_result["pnl_90d"],
+                        score_result["win_rate"],
+                        score_result["profit_factor"],
+                        score_result["pseudo_sharpe"],
+                        score_result["trade_count"],
+                        score_result["avg_hold_hours"],
+                        score_result["trades_per_day"],
+                        score_result["style"],
+                        score_result["normalized_roi"],
+                        score_result["normalized_sharpe"],
+                        score_result["normalized_win_rate"],
+                        score_result["consistency_score"],
+                        score_result["smart_money_bonus"],
+                        score_result["risk_mgmt_score"],
+                        score_result["style_multiplier"],
+                        score_result["recency_decay"],
+                        score_result["composite_score"],
+                        score_result["passes_tier1"],
+                        score_result["passes_consistency"],
+                        score_result["passes_quality"],
+                        score_result["is_eligible"],
+                        score_result["fail_reason"],
+                    ),
+                )
+
+                scored_count += 1
+                if score_result["is_eligible"]:
+                    eligible_count += 1
+                    eligible_traders.append({"address": addr, **score_result})
+    finally:
+        conn.close()
+
+    # Sort eligible traders by composite_score descending
+    eligible_traders.sort(key=lambda x: x["composite_score"], reverse=True)
+
+    logger.info(
+        "score_from_cache complete: %d scored, %d eligible",
+        scored_count,
+        eligible_count,
+    )
+
+    return eligible_traders
+
+
+# ===========================================================================
+# 13. Trader Universe Refresh Orchestrator (Agent 2)
 # ===========================================================================
 
 
@@ -1227,24 +1495,26 @@ async def refresh_trader_universe(
     client,
     db_path: str,
     *,
+    strategy_db_path: str | None = None,
     overrides: dict | None = None,
 ) -> int:
     """Full daily trader refresh orchestrator with percentile-based thresholds.
 
     Two-phase approach:
 
-    1. **Fetch & merge leaderboard** across 3 timeframes.
-    2. **Compute dynamic thresholds** (p50 of the merged population).
-    3. **Phase 1 — Tier-1 pre-check**: identify traders that pass tier-1 and
-       need trade data fetched.  Trades are loaded from the DB cache when
-       fresh enough, otherwise fetched from the API and cached.
-    4. **Compute quality thresholds** from the fetched trade metrics.
-    5. **Phase 2 — Full scoring**: run ``score_trader()`` for every merged
-       trader using both dynamic threshold dicts, and insert results.
-    6. **Log summary** of eligible traders.
+    1. **Data collection** — fetch leaderboard + trades from the API and
+       persist to SQLite (``traders`` and ``trade_history`` tables).
+    2. **Scoring** — delegate to ``score_from_cache()`` which reads only
+       from SQLite.
+
+    If ``collector.py`` is available, data collection is delegated to the
+    collector module.  Otherwise, the legacy inline fetch path is used.
 
     Parameters
     ----------
+    strategy_db_path:
+        Optional path to the strategy database where ``trader_scores``
+        are written.  When ``None``, falls back to *db_path*.
     overrides:
         Optional dict of parameter overrides (from grid search variants).
         Recognised keys: ``FILTER_PERCENTILE``, ``WIN_RATE_MIN``,
@@ -1257,33 +1527,64 @@ async def refresh_trader_universe(
         Count of eligible traders stored (those with ``is_eligible = 1``).
     """
     ovr = overrides or {}
-    _percentile = ovr.get("FILTER_PERCENTILE", FILTER_PERCENTILE)
+    _percentile_val = ovr.get("FILTER_PERCENTILE", FILTER_PERCENTILE)
 
     # ------------------------------------------------------------------
-    # Step 1: Fetch and merge leaderboard across 3 timeframes
+    # Phase A: Data collection — try collector module, fall back to legacy
     # ------------------------------------------------------------------
-    merged = await _fetch_and_merge_leaderboard(client)
-    logger.info("Merged leaderboard: %d unique traders", len(merged))
+    try:
+        from snap.collector import collect_trader_data  # type: ignore[import-not-found]
+        logger.info("Using collector module for data collection")
+        await collect_trader_data(client, db_path)
+    except ImportError:
+        logger.info("collector module not available, using legacy fetch path")
+        await _legacy_collect(client, db_path, percentile=_percentile_val)
 
     # ------------------------------------------------------------------
-    # Step 2: Compute dynamic thresholds from the population
+    # Phase B: Score from cache (no API calls)
     # ------------------------------------------------------------------
-    thresholds = compute_thresholds(merged, percentile=_percentile)
-    logger.info(
-        "Dynamic thresholds (p%.0f): roi_30d=%.4f%% acct=%.0f "
-        "roi_7d=%.4f%% pnl_7d=%.0f roi_90d=%.4f%% pnl_90d=%.0f",
-        _percentile * 100,
-        thresholds["roi_30d"],
-        thresholds["account_value"],
-        thresholds["roi_7d"],
-        thresholds["pnl_7d"],
-        thresholds["roi_90d"],
-        thresholds["pnl_90d"],
+    eligible = score_from_cache(
+        db_path, overrides=overrides, strategy_db_path=strategy_db_path
     )
+    eligible_count = len(eligible)
 
-    # ------------------------------------------------------------------
-    # Step 3: Upsert trader base data into the traders table
-    # ------------------------------------------------------------------
+    # Log top eligible traders
+    if eligible:
+        logger.info("Top %d eligible traders:", min(len(eligible), TOP_N_TRADERS))
+        for i, t in enumerate(eligible[:TOP_N_TRADERS], 1):
+            logger.info(
+                "  #%d  %s  score=%.4f  style=%s  wr=%.2f  sharpe=%.2f",
+                i,
+                t["address"],
+                t["composite_score"],
+                t["style"],
+                t["win_rate"],
+                t["pseudo_sharpe"],
+            )
+    else:
+        logger.warning("No eligible traders found after scoring!")
+
+    return eligible_count
+
+
+async def _legacy_collect(
+    client,
+    db_path: str,
+    *,
+    percentile: float = FILTER_PERCENTILE,
+) -> None:
+    """Legacy data collection path: fetch leaderboard + trades inline.
+
+    Persists merged trader data (including roi/pnl) to the ``traders``
+    table and trade data to ``trade_history``.  This mirrors the old
+    ``refresh_trader_universe`` data-fetching logic and is used when the
+    ``collector`` module is not yet available.
+    """
+    # Fetch and merge leaderboard across 3 timeframes
+    merged = await _fetch_and_merge_leaderboard(client)
+    logger.info("Legacy collect: merged %d unique traders", len(merged))
+
+    # Upsert trader data (including roi/pnl) into the traders table
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_connection(db_path)
     try:
@@ -1291,29 +1592,36 @@ async def refresh_trader_universe(
             for trader in merged.values():
                 conn.execute(
                     """INSERT OR REPLACE INTO traders
-                       (address, label, account_value, updated_at)
-                       VALUES (?, ?, ?, ?)""",
+                       (address, label, account_value,
+                        roi_7d, roi_30d, roi_90d,
+                        pnl_7d, pnl_30d, pnl_90d,
+                        updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         trader["address"],
                         trader["label"],
                         trader["account_value"],
+                        trader.get("roi_7d"),
+                        trader.get("roi_30d"),
+                        trader.get("roi_90d"),
+                        trader.get("pnl_7d"),
+                        trader.get("pnl_30d"),
+                        trader.get("pnl_90d"),
                         now_utc,
                     ),
                 )
     finally:
         conn.close()
 
-    # ------------------------------------------------------------------
-    # Step 4: Phase 1 — Identify tier-1 passers and fetch their trades
-    # ------------------------------------------------------------------
+    # Compute thresholds to identify tier-1 passers for trade fetching
+    thresholds = compute_thresholds(merged, percentile=percentile)
+
     today = datetime.now(timezone.utc).date()
     date_from_90d = (today - timedelta(days=90)).isoformat()
     date_to = today.isoformat()
 
-    # Collect trade metrics for tier-1 passers (needed for quality thresholds)
-    tier1_data: dict[str, dict] = {}  # addr -> {trades, avg_leverage, metrics}
-    tier1_count = 0
     cache_hits = 0
+    tier1_count = 0
 
     for addr, trader in merged.items():
         roi_30d = trader.get("roi_30d")
@@ -1327,212 +1635,25 @@ async def refresh_trader_universe(
         # Try cache first
         cached = _get_cached_trades(db_path, addr, TRADE_CACHE_TTL_HOURS)
         if cached is not None:
-            trades = cached
             cache_hits += 1
-        else:
-            try:
-                trades = await client.get_perp_trades(
-                    address=addr,
-                    date_from=date_from_90d,
-                    date_to=date_to,
-                )
-                _cache_trades(db_path, addr, trades)
-            except Exception:
-                logger.warning(
-                    "Failed to fetch trades for address=%s, using empty list",
-                    addr,
-                    exc_info=True,
-                )
-                trades = []
+            continue  # trades already in DB
 
-        avg_leverage = await _fetch_avg_leverage(client, addr)
-        metrics = compute_trade_metrics(trades)
-
-        tier1_data[addr] = {
-            "trades": trades,
-            "avg_leverage": avg_leverage,
-            "metrics": metrics,
-        }
+        try:
+            trades = await client.get_perp_trades(
+                address=addr,
+                date_from=date_from_90d,
+                date_to=date_to,
+            )
+            _cache_trades(db_path, addr, trades)
+        except Exception:
+            logger.warning(
+                "Failed to fetch trades for address=%s, skipping",
+                addr,
+                exc_info=True,
+            )
 
     logger.info(
-        "Tier-1 passers: %d / %d (cache hits: %d)",
+        "Legacy collect: %d tier-1 passers, %d cache hits",
         tier1_count,
-        len(merged),
         cache_hits,
     )
-
-    # ------------------------------------------------------------------
-    # Step 5: Compute quality thresholds from fetched trade metrics
-    # ------------------------------------------------------------------
-    all_metrics = [d["metrics"] for d in tier1_data.values()]
-    quality_thresholds = compute_quality_thresholds(all_metrics, percentile=_percentile)
-    logger.info(
-        "Quality thresholds (p%.0f): min_trades=%.0f min_pf=%.2f "
-        "wr_range=[%.2f, %.2f]",
-        _percentile * 100,
-        quality_thresholds["min_trade_count"],
-        quality_thresholds["min_profit_factor"],
-        quality_thresholds["win_rate_min"],
-        quality_thresholds["win_rate_max"],
-    )
-
-    # ------------------------------------------------------------------
-    # Step 6: Phase 2 — Full scoring for all traders
-    # ------------------------------------------------------------------
-    scored_count = 0
-    eligible_count = 0
-    gate_tier1 = 0
-    gate_consistency = 0
-    gate_quality = 0
-    gate_style_ok = 0
-    fail_reason_counts: dict[str, int] = {}
-
-    for addr, trader in merged.items():
-        acct_val = trader.get("account_value")
-
-        # Use fetched data for tier-1 passers, empty for others
-        if addr in tier1_data:
-            trades = tier1_data[addr]["trades"]
-            avg_leverage = tier1_data[addr]["avg_leverage"]
-        else:
-            trades = []
-            avg_leverage = None
-
-        score_result = score_trader(
-            roi_7d=trader.get("roi_7d"),
-            roi_30d=trader.get("roi_30d"),
-            roi_90d=trader.get("roi_90d"),
-            pnl_7d=trader.get("pnl_7d"),
-            pnl_30d=trader.get("pnl_30d"),
-            pnl_90d=trader.get("pnl_90d"),
-            account_value=acct_val,
-            label=trader.get("label", ""),
-            trades=trades,
-            avg_leverage=avg_leverage,
-            thresholds=thresholds,
-            quality_thresholds=quality_thresholds,
-            overrides=overrides,
-        )
-
-        # Insert score into trader_scores table
-        conn = get_connection(db_path)
-        try:
-            with conn:
-                conn.execute(
-                    """INSERT INTO trader_scores (
-                        address, roi_7d, roi_30d, roi_90d,
-                        pnl_7d, pnl_30d, pnl_90d,
-                        win_rate, profit_factor, pseudo_sharpe, trade_count,
-                        avg_hold_hours, trades_per_day, style,
-                        normalized_roi, normalized_sharpe, normalized_win_rate,
-                        consistency_score, smart_money_bonus, risk_mgmt_score,
-                        style_multiplier, recency_decay, composite_score,
-                        passes_tier1, passes_consistency, passes_quality,
-                        is_eligible, fail_reason
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        addr,
-                        score_result["roi_7d"],
-                        score_result["roi_30d"],
-                        score_result["roi_90d"],
-                        score_result["pnl_7d"],
-                        score_result["pnl_30d"],
-                        score_result["pnl_90d"],
-                        score_result["win_rate"],
-                        score_result["profit_factor"],
-                        score_result["pseudo_sharpe"],
-                        score_result["trade_count"],
-                        score_result["avg_hold_hours"],
-                        score_result["trades_per_day"],
-                        score_result["style"],
-                        score_result["normalized_roi"],
-                        score_result["normalized_sharpe"],
-                        score_result["normalized_win_rate"],
-                        score_result["consistency_score"],
-                        score_result["smart_money_bonus"],
-                        score_result["risk_mgmt_score"],
-                        score_result["style_multiplier"],
-                        score_result["recency_decay"],
-                        score_result["composite_score"],
-                        score_result["passes_tier1"],
-                        score_result["passes_consistency"],
-                        score_result["passes_quality"],
-                        score_result["is_eligible"],
-                        score_result["fail_reason"],
-                    ),
-                )
-        finally:
-            conn.close()
-
-        scored_count += 1
-        if score_result["passes_tier1"]:
-            gate_tier1 += 1
-        if score_result["passes_consistency"]:
-            gate_consistency += 1
-        if score_result["passes_quality"]:
-            gate_quality += 1
-        if score_result["style"] != "HFT":
-            gate_style_ok += 1
-        if score_result["is_eligible"]:
-            eligible_count += 1
-        if score_result["fail_reason"]:
-            for reason in score_result["fail_reason"].split(","):
-                fail_reason_counts[reason] = fail_reason_counts.get(reason, 0) + 1
-
-    # ------------------------------------------------------------------
-    # Step 7: Log summary with gate funnel
-    # ------------------------------------------------------------------
-    logger.info(
-        "Gate funnel: total=%d → tier1=%d → consistency=%d → quality=%d "
-        "→ style_ok=%d → eligible=%d",
-        scored_count,
-        gate_tier1,
-        gate_consistency,
-        gate_quality,
-        gate_style_ok,
-        eligible_count,
-    )
-    if fail_reason_counts:
-        sorted_reasons = sorted(
-            fail_reason_counts.items(), key=lambda x: x[1], reverse=True
-        )
-        logger.info(
-            "Fail reason breakdown: %s",
-            ", ".join(f"{r}={c}" for r, c in sorted_reasons),
-        )
-    logger.info(
-        "Scoring complete: %d traders scored, %d eligible (TOP_N=%d)",
-        scored_count,
-        eligible_count,
-        TOP_N_TRADERS,
-    )
-
-    conn = get_connection(db_path)
-    try:
-        rows = conn.execute(
-            """SELECT address, composite_score, style, win_rate, pseudo_sharpe
-               FROM trader_scores
-               WHERE is_eligible = 1
-               ORDER BY composite_score DESC
-               LIMIT ?""",
-            (TOP_N_TRADERS,),
-        ).fetchall()
-
-        if rows:
-            logger.info("Top %d eligible traders:", min(len(rows), TOP_N_TRADERS))
-            for i, row in enumerate(rows, 1):
-                logger.info(
-                    "  #%d  %s  score=%.4f  style=%s  wr=%.2f  sharpe=%.2f",
-                    i,
-                    row["address"],
-                    row["composite_score"],
-                    row["style"],
-                    row["win_rate"],
-                    row["pseudo_sharpe"],
-                )
-        else:
-            logger.warning("No eligible traders found after scoring!")
-    finally:
-        conn.close()
-
-    return eligible_count

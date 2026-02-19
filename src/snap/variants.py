@@ -130,3 +130,26 @@ VARIANT_DESCRIPTIONS: dict[str, str] = {
         "with moderate Sharpe/consistency. Aims for steady, diversified exposure."
     ),
 }
+
+
+def format_variant_details(key: str) -> str:
+    """Generate a formatted parameter summary for a variant."""
+    v = VARIANTS.get(key)
+    if not v:
+        return ""
+    w = v.get("weights", {})
+    lines = [
+        VARIANT_DESCRIPTIONS.get(key, ""),
+        "",
+        "Parameters:",
+        f"  Filter Percentile:   {v.get('FILTER_PERCENTILE', 0):.0%}",
+        f"  Win Rate Range:      {v.get('WIN_RATE_MIN', 0):.0%} – {v.get('WIN_RATE_MAX', 0):.0%}",
+        f"  Min Profit Factor:   {v.get('TREND_TRADER_MIN_PF', 0):.1f}",
+        f"  Position Multiplier: {v.get('position_mult', 0):.2f}",
+        "",
+        "Scoring Weights:",
+        f"  ROI:         {w.get('roi', 0):>5.0%}   Sharpe:      {w.get('sharpe', 0):>5.0%}",
+        f"  Win Rate:    {w.get('win_rate', 0):>5.0%}   Consistency: {w.get('consistency', 0):>5.0%}",
+        f"  Smart Money: {w.get('smart_money', 0):>5.0%}   Risk Mgmt:   {w.get('risk_mgmt', 0):>5.0%}",
+    ]
+    return "\n".join(lines)

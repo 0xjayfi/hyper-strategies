@@ -27,7 +27,7 @@ from snap.config import (
     REBALANCE_INTERVAL_HOURS,
     TOP_N_TRADERS,
 )
-from snap.database import get_connection, init_db
+from snap.database import get_connection
 from snap.execution import HyperliquidClient, PaperTradeClient, execute_rebalance
 from snap.monitoring import _monitor_once, rebalance_lock
 from snap.portfolio import (
@@ -108,7 +108,11 @@ class SystemScheduler:
     nansen_client:
         Nansen API client for data ingestion.
     db_path:
-        Path to the SQLite database.
+        Path to the SQLite database (data DB in dual-DB mode, or the
+        single combined DB).
+    strategy_db_path:
+        Optional path to the strategy database.  When ``None``, defaults
+        to *db_path* (single-DB mode).
     """
 
     def __init__(
@@ -116,10 +120,15 @@ class SystemScheduler:
         client: HyperliquidClient,
         nansen_client,
         db_path: str,
+        *,
+        strategy_db_path: str | None = None,
+        scoring_overrides: dict | None = None,
     ) -> None:
         self.client = client
         self.nansen_client = nansen_client
         self.db_path = db_path
+        self.strategy_db_path = strategy_db_path or db_path
+        self._scoring_overrides = scoring_overrides
 
         self.state = SchedulerState.IDLE
         self._stop_event = asyncio.Event()
@@ -130,6 +139,10 @@ class SystemScheduler:
         self._last_rebalance: datetime | None = None
         self._last_trade_ingestion: datetime | None = None
         self._last_monitor: datetime | None = None
+
+    def set_scoring_overrides(self, overrides: dict | None) -> None:
+        """Update scoring variant overrides (for live variant switching)."""
+        self._scoring_overrides = overrides
 
     # -- State management --------------------------------------------------
 
@@ -153,7 +166,7 @@ class SystemScheduler:
             ("last_rebalance_at", "_last_rebalance"),
             ("last_trade_ingestion_at", "_last_trade_ingestion"),
         ]:
-            val = get_system_state(self.db_path, key)
+            val = get_system_state(self.strategy_db_path, key)
             if val:
                 try:
                     dt = datetime.strptime(val, "%Y-%m-%dT%H:%M:%SZ").replace(
@@ -173,12 +186,15 @@ class SystemScheduler:
             from snap.scoring import refresh_trader_universe
 
             eligible = await refresh_trader_universe(
-                self.nansen_client, self.db_path
+                self.nansen_client,
+                self.db_path,
+                strategy_db_path=self.strategy_db_path,
+                overrides=self._scoring_overrides,
             )
             now = datetime.now(timezone.utc)
             self._last_trader_refresh = now
             set_system_state(
-                self.db_path,
+                self.strategy_db_path,
                 "last_trader_refresh_at",
                 now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
@@ -197,13 +213,13 @@ class SystemScheduler:
             try:
                 rebalance_id = str(uuid.uuid4())
 
-                # 1. Get tracked traders
-                tracked = get_tracked_traders(self.db_path, TOP_N_TRADERS)
+                # 1. Get tracked traders (from strategy DB)
+                tracked = get_tracked_traders(self.strategy_db_path, TOP_N_TRADERS)
                 if not tracked:
                     logger.warning("No tracked traders, skipping rebalance")
                     return
 
-                # 2. Snapshot positions for each trader
+                # 2. Snapshot positions for each trader (into data DB)
                 from snap.ingestion import ingest_positions
 
                 addresses = [t["address"] for t in tracked]
@@ -211,7 +227,7 @@ class SystemScheduler:
                     self.nansen_client, self.db_path, addresses, rebalance_id
                 )
 
-                # 2b. Update PaperTradeClient mark prices from snapshots
+                # 2b. Update PaperTradeClient mark prices from snapshots (data DB)
                 if isinstance(self.client, PaperTradeClient):
                     _conn = get_connection(self.db_path)
                     try:
@@ -232,7 +248,7 @@ class SystemScheduler:
                     finally:
                         _conn.close()
 
-                # 3. Build trader snapshots for target computation
+                # 3. Build trader snapshots for target computation (data DB)
                 conn = get_connection(self.db_path)
                 try:
                     snapshots = []
@@ -263,23 +279,23 @@ class SystemScheduler:
                 finally:
                     conn.close()
 
-                # 4. Get our account value
-                acct_val_str = get_system_state(self.db_path, "account_value")
+                # 4. Get our account value (from strategy DB)
+                acct_val_str = get_system_state(self.strategy_db_path, "account_value")
                 my_account_value = float(acct_val_str) if acct_val_str else 100_000.0
 
-                # 5. Compute target portfolio
+                # 5. Compute target portfolio (strategy DB)
                 targets = compute_target_portfolio(snapshots, my_account_value)
                 targets = net_opposing_targets(targets)
                 targets = apply_risk_overlay(targets, my_account_value)
-                store_target_allocations(self.db_path, rebalance_id, targets)
+                store_target_allocations(self.strategy_db_path, rebalance_id, targets)
 
-                # 6. Compute diff and execute
-                current = get_current_positions(self.db_path)
+                # 6. Compute diff and execute (strategy DB)
+                current = get_current_positions(self.strategy_db_path)
                 actions = compute_rebalance_diff(targets, current)
 
                 if actions:
                     summary = await execute_rebalance(
-                        self.client, rebalance_id, actions, self.db_path
+                        self.client, rebalance_id, actions, self.strategy_db_path
                     )
                     logger.info("Rebalance %s: %s", rebalance_id, summary)
                 else:
@@ -288,7 +304,7 @@ class SystemScheduler:
                 now = datetime.now(timezone.utc)
                 self._last_rebalance = now
                 set_system_state(
-                    self.db_path,
+                    self.strategy_db_path,
                     "last_rebalance_at",
                     now.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 )
@@ -305,7 +321,7 @@ class SystemScheduler:
         try:
             from snap.ingestion import ingest_trades
 
-            tracked = get_tracked_traders(self.db_path, TOP_N_TRADERS)
+            tracked = get_tracked_traders(self.strategy_db_path, TOP_N_TRADERS)
             if not tracked:
                 return
 
@@ -320,7 +336,7 @@ class SystemScheduler:
             )
             self._last_trade_ingestion = now
             set_system_state(
-                self.db_path,
+                self.strategy_db_path,
                 "last_trade_ingestion_at",
                 now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
@@ -337,7 +353,7 @@ class SystemScheduler:
         self._set_state(SchedulerState.MONITORING)
         async with rebalance_lock:
             try:
-                summary = await _monitor_once(self.client, self.db_path)
+                summary = await _monitor_once(self.client, self.strategy_db_path)
                 self._last_monitor = datetime.now(timezone.utc)
                 logger.debug("Monitor: %s", summary)
             except Exception:
