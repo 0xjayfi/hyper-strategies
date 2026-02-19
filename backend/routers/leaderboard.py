@@ -49,7 +49,8 @@ def _build_datastore_leaderboard(
         # Get trade metrics for win_rate, profit_factor, num_trades
         metrics = datastore.get_latest_metrics(address, window_days=30)
         win_rate = metrics.win_rate if metrics else None
-        profit_factor = metrics.profit_factor if metrics else None
+        pf = metrics.profit_factor if metrics else None
+        profit_factor = pf if pf is not None and pf != float("inf") else None
         num_trades = metrics.total_trades if metrics else 0
         total_pnl = metrics.total_pnl if metrics else 0.0
         roi_pct = metrics.roi_proxy if metrics else 0.0
