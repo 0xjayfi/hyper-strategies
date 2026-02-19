@@ -38,8 +38,10 @@ from src.config import (
 from src.models import (
     AssetPosition,
     LeaderboardEntry,
+    PerpScreenerEntry,
     PnlLeaderboardEntry,
     PositionSnapshot,
+    TokenPerpPositionEntry,
     Trade,
 )
 
@@ -698,3 +700,95 @@ class NansenClient:
 
         data = await self._request("/api/v1/tgm/perp-pnl-leaderboard", payload)
         return [PnlLeaderboardEntry.model_validate(item) for item in data["data"]]
+
+    # ------------------------------------------------------------------
+    # Token perp positions (TGM)
+    # ------------------------------------------------------------------
+
+    async def fetch_token_perp_positions(
+        self,
+        token_symbol: str,
+        label_type: str = "all_traders",
+        pagination: dict[str, Any] | None = None,
+        filters: dict[str, Any] | None = None,
+        order_by: list[dict[str, str]] | None = None,
+    ) -> list[TokenPerpPositionEntry]:
+        """Fetch perpetual positions for a specific token.
+
+        Calls the TGM ``/api/v1/tgm/perp-positions`` endpoint (uses the
+        leaderboard rate limiter, not the profiler limiter).
+
+        Parameters
+        ----------
+        token_symbol:
+            Token to query (e.g. ``"BTC"``, ``"ETH"``).
+        label_type:
+            Filter by label type (default ``"all_traders"``).
+        pagination:
+            Optional pagination dict.
+        filters:
+            Optional filter dict (e.g. position_value_usd, side, upnl_usd).
+        order_by:
+            Optional sort order list.
+
+        Returns
+        -------
+        list[TokenPerpPositionEntry]
+        """
+        payload: dict[str, Any] = {
+            "token_symbol": token_symbol,
+            "label_type": label_type,
+        }
+        if pagination is not None:
+            payload["pagination"] = pagination
+        if filters is not None:
+            payload["filters"] = filters
+        if order_by is not None:
+            payload["order_by"] = order_by
+
+        data = await self._request("/api/v1/tgm/perp-positions", payload)
+        return [TokenPerpPositionEntry.model_validate(item) for item in data["data"]]
+
+    # ------------------------------------------------------------------
+    # Perp screener
+    # ------------------------------------------------------------------
+
+    async def fetch_perp_screener(
+        self,
+        date_from: str,
+        date_to: str,
+        filters: dict[str, Any] | None = None,
+        pagination: dict[str, Any] | None = None,
+        order_by: list[dict[str, str]] | None = None,
+    ) -> list[PerpScreenerEntry]:
+        """Fetch the perpetual screener data.
+
+        Uses the leaderboard rate limiter (not a profiler endpoint).
+
+        Parameters
+        ----------
+        date_from / date_to:
+            Date range in ``YYYY-MM-DD`` format.
+        filters:
+            Optional filter dict (e.g. token_symbol, volume).
+        pagination:
+            Optional pagination dict.
+        order_by:
+            Optional sort order list.
+
+        Returns
+        -------
+        list[PerpScreenerEntry]
+        """
+        payload: dict[str, Any] = {
+            "date": {"from": date_from, "to": date_to},
+        }
+        if filters is not None:
+            payload["filters"] = filters
+        if pagination is not None:
+            payload["pagination"] = pagination
+        if order_by is not None:
+            payload["order_by"] = order_by
+
+        data = await self._request("/api/v1/perp-screener", payload)
+        return [PerpScreenerEntry.model_validate(item) for item in data["data"]]

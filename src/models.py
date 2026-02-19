@@ -154,6 +154,62 @@ class PnlLeaderboardEntry(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Token Perp Positions — POST /api/v1/tgm/perp-positions
+# ---------------------------------------------------------------------------
+
+class TokenPerpPositionEntry(BaseModel):
+    """A single position from the TGM perp-positions endpoint.
+
+    ``leverage`` is returned as a string like ``"5X"`` by the API.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: str
+    address_label: str | None = None
+    side: str
+    position_value_usd: float
+    position_size: float
+    leverage: str  # e.g. "5X"
+    leverage_type: str | None = None
+    entry_price: float
+    mark_price: float
+    liquidation_price: float | None = None
+    funding_usd: float | None = None
+    upnl_usd: float | None = None
+
+
+# ---------------------------------------------------------------------------
+# Perp Screener — POST /api/v1/perp-screener
+# ---------------------------------------------------------------------------
+
+class PerpScreenerEntry(BaseModel):
+    """A single row from the perp-screener endpoint."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    token_symbol: str
+    buy_sell_pressure: float | None = None
+    buy_volume: float | None = None
+    sell_volume: float | None = None
+    volume: float | None = None
+    funding: float | None = None
+    mark_price: float | None = None
+    open_interest: float | None = None
+    previous_price_usd: float | None = None
+    trader_count: int | None = None
+    # Smart money fields (present when label_type=smart_money)
+    smart_money_volume: float | None = None
+    smart_money_buy_volume: float | None = None
+    smart_money_sell_volume: float | None = None
+    smart_money_longs_count: int | None = None
+    smart_money_shorts_count: int | None = None
+    current_smart_money_position_longs_usd: float | None = None
+    current_smart_money_position_shorts_usd: float | None = None
+    net_position_change: float | None = None
+
+
+# ---------------------------------------------------------------------------
 # Shared pagination response
 # ---------------------------------------------------------------------------
 

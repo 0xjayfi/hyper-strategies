@@ -390,6 +390,26 @@ class DataStore:
         ).fetchone()
         return dict(row) if row else None
 
+    def get_latest_scores(self) -> dict[str, dict]:
+        """Return the most recent score for every trader as ``{address: score_dict}``.
+
+        For each address, only the row with the maximum ``computed_at`` is
+        included.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT ts.*
+              FROM trader_scores ts
+              JOIN (
+                SELECT address, MAX(computed_at) AS max_ts
+                  FROM trader_scores
+                 GROUP BY address
+              ) latest ON ts.address = latest.address
+                      AND ts.computed_at = latest.max_ts
+            """
+        ).fetchall()
+        return {r["address"]: dict(r) for r in rows}
+
     # ------------------------------------------------------------------
     # Allocations
     # ------------------------------------------------------------------
