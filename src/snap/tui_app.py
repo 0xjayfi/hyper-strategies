@@ -61,6 +61,7 @@ class OnboardingConfig:
     monitor_interval_seconds: int = MONITOR_INTERVAL_SECONDS
     account_value: float = ACCOUNT_VALUE
     max_positions: int = MAX_TOTAL_POSITIONS
+    custom_overrides: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +169,37 @@ OnboardingStrategy #strategy-container #description-box {
 OnboardingStrategy #strategy-container #btn-row {
     align-horizontal: right;
     height: 3;
+}
+
+OnboardingStrategy #strategy-container #custom-form {
+    height: auto;
+    min-height: 14;
+    max-height: 30;
+    padding: 1;
+    border: tall $primary;
+    margin: 0 0 1 0;
+    background: $boost;
+}
+
+OnboardingStrategy #custom-form .custom-section-head {
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 1;
+}
+
+OnboardingStrategy #custom-form .custom-row {
+    height: 3;
+    margin: 0 0 0 0;
+}
+
+OnboardingStrategy #custom-form .custom-row Label {
+    width: 26;
+    padding: 1 1 0 0;
+    text-align: right;
+}
+
+OnboardingStrategy #custom-form .custom-row Input {
+    width: 1fr;
 }
 
 
@@ -325,6 +357,14 @@ DashboardScreen .panel-title {
     padding: 0 1;
     background: $primary-background;
 }
+
+DashboardScreen .panel-info {
+    height: auto;
+    max-height: 8;
+    padding: 0 1;
+    color: $text-muted;
+    background: $surface;
+}
 """
 
 # ---------------------------------------------------------------------------
@@ -451,6 +491,56 @@ class OnboardingIntro(Screen):
 # ---------------------------------------------------------------------------
 
 _VARIANT_KEYS = list(VARIANTS.keys())
+_ALL_STRATEGY_KEYS = _VARIANT_KEYS + ["CUSTOM"]
+
+# Custom form field definitions: (input_id, label, default_value, tooltip)
+_CUSTOM_FILTER_FIELDS = [
+    ("inp-filter-pct", "Filter Percentile", 0.50,
+     "Percentile cutoff for the tier-1 filter. Traders below this ROI "
+     "percentile are discarded. 0.50 = median (top 50%), 0.65 = stricter (top 35%)."),
+    ("inp-wr-min", "Win Rate Min", 0.30,
+     "Minimum win rate to pass the quality gate. Traders with a lower fraction "
+     "of profitable trades are excluded. Typical range: 0.25-0.45."),
+    ("inp-wr-max", "Win Rate Max", 0.95,
+     "Maximum win rate allowed. Extremely high win rates (>95%) often indicate "
+     "bots or wash trading. Set lower to be more conservative."),
+    ("inp-trend-pf", "Trend Min PF", 2.5,
+     "Minimum profit factor required for trend-following traders. Profit factor "
+     "= gross profit / gross loss. Higher values demand more profitable trend traders."),
+    ("inp-trend-wr", "Trend Max WR", 0.40,
+     "Maximum win rate to classify a trader as trend-following style. Trend "
+     "traders typically win less often but win big. Lower = stricter classification."),
+    ("inp-hft-tpd", "HFT Trades/Day", 5.0,
+     "Minimum trades per day to classify a trader as high-frequency (HFT). "
+     "Traders above this threshold get HFT-specific scoring adjustments."),
+    ("inp-hft-ahh", "HFT Avg Hold Hrs", 4.0,
+     "Maximum average hold time (hours) to classify as HFT. Combined with "
+     "trades/day to identify short-term scalpers and market makers."),
+    ("inp-pos-mult", "Position Multiplier", 0.8,
+     "Scales the copy position size relative to the trader's size. 0.8 = copy "
+     "at 80% of the computed size. Lower = more conservative position sizing."),
+]
+
+_CUSTOM_WEIGHT_FIELDS = [
+    ("inp-w-roi", "ROI Weight", 0.25,
+     "Weight for return on investment in the composite score. Measures raw "
+     "profitability across 7d/30d/90d windows, normalized against the cohort."),
+    ("inp-w-sharpe", "Sharpe Weight", 0.20,
+     "Weight for the pseudo-Sharpe ratio: mean(pnl) / stdev(pnl). Rewards "
+     "traders with high risk-adjusted returns and penalizes volatile PnL."),
+    ("inp-w-winrate", "Win Rate Weight", 0.15,
+     "Weight for win rate in the composite score. Fraction of trades closed "
+     "in profit, bounded by the min/max filters above."),
+    ("inp-w-consistency", "Consistency Weight", 0.20,
+     "Weight for multi-timeframe consistency. Checks that the trader is "
+     "profitable on 7d, 30d, and 90d windows simultaneously."),
+    ("inp-w-smart", "Smart Money Weight", 0.10,
+     "Weight for smart money bonus. Awards extra score to wallets flagged as "
+     "institutional, fund, or whale on Nansen's smart money labels."),
+    ("inp-w-risk", "Risk Mgmt Weight", 0.10,
+     "Weight for risk management score. Penalizes excessive leverage and "
+     "rewards isolated margin usage and controlled position sizing."),
+]
 
 
 class OnboardingStrategy(Screen):
@@ -471,28 +561,101 @@ class OnboardingStrategy(Screen):
             )
             yield Rule()
             with RadioSet(id="strategy-radio"):
-                for key in _VARIANT_KEYS:
+                for key in _ALL_STRATEGY_KEYS:
                     label = f"{key}: {VARIANT_LABELS[key]}"
                     yield RadioButton(label, value=key == self.ob_config.variant_key)
             yield Static(
                 format_variant_details(self.ob_config.variant_key),
                 id="description-box",
             )
+            with VerticalScroll(id="custom-form"):
+                yield Static("Filter Parameters", classes="custom-section-head")
+                for inp_id, lbl, default, tip in _CUSTOM_FILTER_FIELDS:
+                    with Horizontal(classes="custom-row"):
+                        lbl_widget = Label(f"{lbl}:")
+                        lbl_widget.tooltip = tip
+                        yield lbl_widget
+                        yield Input(str(default), id=inp_id, type="number")
+                yield Rule()
+                yield Static("Scoring Weights (must sum to 1.0)", classes="custom-section-head")
+                for inp_id, lbl, default, tip in _CUSTOM_WEIGHT_FIELDS:
+                    with Horizontal(classes="custom-row"):
+                        lbl_widget = Label(f"{lbl}:")
+                        lbl_widget.tooltip = tip
+                        yield lbl_widget
+                        yield Input(str(default), id=inp_id, type="number")
             with Horizontal(id="btn-row"):
                 yield Button("Next →", variant="primary", id="btn-next")
+
+    def on_mount(self) -> None:
+        # Hide custom form initially (unless CUSTOM is already selected)
+        is_custom = self.ob_config.variant_key == "CUSTOM"
+        self.query_one("#custom-form").display = is_custom
+        self.query_one("#description-box").display = not is_custom
 
     @on(RadioSet.Changed, "#strategy-radio")
     def _strategy_changed(self, event: RadioSet.Changed) -> None:
         idx = event.radio_set.pressed_index
-        if idx is not None and 0 <= idx < len(_VARIANT_KEYS):
-            key = _VARIANT_KEYS[idx]
+        if idx is not None and 0 <= idx < len(_ALL_STRATEGY_KEYS):
+            key = _ALL_STRATEGY_KEYS[idx]
             self.ob_config.variant_key = key
-            desc_widget = self.query_one("#description-box", Static)
-            desc_widget.update(format_variant_details(key))
+            if key == "CUSTOM":
+                self.query_one("#description-box").display = False
+                self.query_one("#custom-form").display = True
+            else:
+                self.query_one("#custom-form").display = False
+                self.query_one("#description-box").display = True
+                desc_widget = self.query_one("#description-box", Static)
+                desc_widget.update(format_variant_details(key))
 
     @on(Button.Pressed, "#btn-next")
     def _go_next(self, event: Button.Pressed) -> None:
+        if self.ob_config.variant_key == "CUSTOM":
+            overrides = self._read_custom_form()
+            if overrides is None:
+                return  # validation failed, notification shown
+            self.ob_config.custom_overrides = overrides
         self.app.push_screen(OnboardingStage(self.ob_config))
+
+    def _read_custom_form(self) -> dict | None:
+        """Read and validate custom form inputs. Returns overrides dict or None on error."""
+        try:
+            vals = {}
+            for inp_id, _, _, _ in _CUSTOM_FILTER_FIELDS + _CUSTOM_WEIGHT_FIELDS:
+                raw = self.query_one(f"#{inp_id}", Input).value
+                vals[inp_id] = float(raw)
+        except (ValueError, TypeError):
+            self.notify("All fields must be valid numbers.", title="Validation Error", severity="error")
+            return None
+
+        # Check weight sum
+        weight_sum = sum(vals[inp_id] for inp_id, _, _, _ in _CUSTOM_WEIGHT_FIELDS)
+        if abs(weight_sum - 1.0) > 0.01:
+            self.notify(
+                f"Scoring weights sum to {weight_sum:.3f} — must be 1.0 (±0.01).",
+                title="Validation Error",
+                severity="error",
+            )
+            return None
+
+        return {
+            "FILTER_PERCENTILE": vals["inp-filter-pct"],
+            "WIN_RATE_MIN": vals["inp-wr-min"],
+            "WIN_RATE_MAX": vals["inp-wr-max"],
+            "TREND_TRADER_MIN_PF": vals["inp-trend-pf"],
+            "TREND_TRADER_MAX_WR": vals["inp-trend-wr"],
+            "hft_tpd": vals["inp-hft-tpd"],
+            "hft_ahh": vals["inp-hft-ahh"],
+            "position_mult": vals["inp-pos-mult"],
+            "weights": {
+                "roi": vals["inp-w-roi"],
+                "sharpe": vals["inp-w-sharpe"],
+                "win_rate": vals["inp-w-winrate"],
+                "consistency": vals["inp-w-consistency"],
+                "smart_money": vals["inp-w-smart"],
+                "risk_mgmt": vals["inp-w-risk"],
+            },
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -758,6 +921,9 @@ class DashboardScreen(Screen):
         self._data_age_str: str = "no data"
         self._last_data_check: datetime | None = None
         self._session_start: datetime = datetime.now(timezone.utc)
+        self._row_tokens: list[str] = []
+        self._position_tooltips: dict[str, str] = {}
+        self._row_addresses: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -778,10 +944,12 @@ class DashboardScreen(Screen):
         with Vertical(id="portfolio-panel"):
             yield Static(" Portfolio", classes="panel-title")
             yield DataTable(id="portfolio-table")
+            yield Static("", id="portfolio-info", classes="panel-info")
 
         with Vertical(id="scores-panel"):
             yield Static(" Eligible Traders", classes="panel-title")
             yield DataTable(id="scores-table")
+            yield Static("", id="scores-info", classes="panel-info")
 
         # Row 3: Log panel (full width, bottom strip)
         with Vertical(id="log-panel"):
@@ -796,10 +964,16 @@ class DashboardScreen(Screen):
         ptable.add_columns("Token", "Side", "Entry", "Live", "Size USD", "PnL", "PnL %", "Lev", "Margin", "Trend")
         ptable.cursor_type = "row"
 
+        # Watch hover coordinate for info bar updates
+        self.watch(ptable, "hover_coordinate", self._on_portfolio_hover)
+
         # Set up scores table columns
         stable = self.query_one("#scores-table", DataTable)
         stable.add_columns("#", "Address", "Score", "Style", "ROI 30d", "WR", "PF", "Trades")
         stable.cursor_type = "row"
+
+        # Watch hover coordinate for info bar updates
+        self.watch(stable, "hover_coordinate", self._on_scores_hover)
 
         # Install log handler
         log_view = self.query_one("#log-view", RichLog)
@@ -858,6 +1032,7 @@ class DashboardScreen(Screen):
         """Load portfolio data from the database into the DataTable."""
         ptable = self.query_one("#portfolio-table", DataTable)
         ptable.clear()
+        self._row_tokens = []
 
         try:
             db_path = self.app.db_path
@@ -865,9 +1040,12 @@ class DashboardScreen(Screen):
             try:
                 rows = conn.execute(
                     """SELECT token_symbol, side, position_usd, unrealized_pnl,
-                              leverage, entry_price, current_price
+                              leverage, entry_price, current_price,
+                              opened_at, max_close_at, stop_loss_price,
+                              trailing_stop_price, trailing_high
                        FROM our_positions ORDER BY position_usd DESC"""
                 ).fetchall()
+                self._build_position_tooltips(conn, rows)
             finally:
                 conn.close()
 
@@ -913,6 +1091,7 @@ class DashboardScreen(Screen):
                     f"${margin:,.0f}",
                     Text(spark, style=trend_style),
                 )
+                self._row_tokens.append(token)
 
                 total_size += pos_usd
                 total_pnl += pnl
@@ -941,10 +1120,85 @@ class DashboardScreen(Screen):
         except Exception as e:
             logger.warning("Portfolio load failed: %s", e)
 
+    def _build_position_tooltips(self, conn, position_rows) -> None:
+        """Build tooltip strings for each position from order history."""
+        self._position_tooltips = {}
+        for pos in position_rows:
+            token = pos["token_symbol"]
+            opened = pos["opened_at"] or "N/A"
+            max_close = pos["max_close_at"] or "N/A"
+            stop_loss = pos["stop_loss_price"]
+            trailing = pos["trailing_stop_price"]
+            trailing_hi = pos["trailing_high"]
+
+            lines = [
+                f"--- {token} ---",
+                f"  Opened:        {opened[:16] if opened != 'N/A' else opened}",
+                f"  Time Stop:     {max_close[:16] if max_close != 'N/A' else max_close}",
+            ]
+            if stop_loss:
+                lines.append(f"  Stop Loss:     {_fmt_price(stop_loss)}")
+            if trailing:
+                lines.append(f"  Trailing Stop: {_fmt_price(trailing)}")
+            if trailing_hi:
+                lines.append(f"  Trailing High: {_fmt_price(trailing_hi)}")
+
+            # Fetch recent 5 orders for this token
+            orders = conn.execute(
+                """SELECT side, order_type, status, intended_usd,
+                          filled_avg_price, slippage_bps,
+                          created_at, filled_at
+                   FROM orders
+                   WHERE token_symbol = ?
+                   ORDER BY created_at DESC
+                   LIMIT 5""",
+                (token,),
+            ).fetchall()
+
+            if orders:
+                lines.append("")
+                lines.append("Recent Orders:")
+                for o in orders:
+                    ts = (o["filled_at"] or o["created_at"] or "?")[:16]
+                    status = o["status"] or "?"
+                    usd = o["intended_usd"] or 0
+                    slip = o["slippage_bps"]
+                    slip_str = f"  slip {slip:+.1f}bp" if slip else ""
+                    lines.append(
+                        f"  {ts}  {o['side']:5s} {o['order_type']:6s}  "
+                        f"${usd:,.0f}  [{status}]{slip_str}"
+                    )
+            else:
+                lines.append("")
+                lines.append("No order history yet.")
+
+            self._position_tooltips[token] = "\n".join(lines)
+
+    def _on_portfolio_hover(self, coordinate) -> None:
+        """Update portfolio info bar based on hovered row."""
+        info = self.query_one("#portfolio-info", Static)
+        row_idx = coordinate.row
+        if 0 <= row_idx < len(self._row_tokens):
+            token = self._row_tokens[row_idx]
+            text = self._position_tooltips.get(token, "")
+            info.update(text)
+        else:
+            info.update("")
+
+    def _on_scores_hover(self, coordinate) -> None:
+        """Update scores info bar to show full address on hover."""
+        info = self.query_one("#scores-info", Static)
+        row_idx = coordinate.row
+        if 0 <= row_idx < len(self._row_addresses):
+            info.update(self._row_addresses[row_idx])
+        else:
+            info.update("")
+
     def _load_scores(self) -> None:
         """Load trader scores from the database into the DataTable."""
         stable = self.query_one("#scores-table", DataTable)
         stable.clear()
+        self._row_addresses = []
 
         try:
             db_path = self.app.db_path
@@ -1042,6 +1296,7 @@ class DashboardScreen(Screen):
                     f"{pf:.1f}",
                     str(trades),
                 )
+                self._row_addresses.append(addr)
 
             if not rows:
                 stable.add_row(
@@ -1226,7 +1481,10 @@ class DashboardScreen(Screen):
             self._load_portfolio()
             return  # Don't start the scheduler loop
 
-        variant_overrides = VARIANTS.get(self.ob_config.variant_key)
+        if self.ob_config.variant_key == "CUSTOM":
+            variant_overrides = self.ob_config.custom_overrides
+        else:
+            variant_overrides = VARIANTS.get(self.ob_config.variant_key)
 
         scheduler = SystemScheduler(
             client=client,
@@ -1309,7 +1567,10 @@ class DashboardScreen(Screen):
         from snap.variants import VARIANTS
 
         try:
-            overrides = VARIANTS.get(self.ob_config.variant_key)
+            if self.ob_config.variant_key == "CUSTOM":
+                overrides = self.ob_config.custom_overrides
+            else:
+                overrides = VARIANTS.get(self.ob_config.variant_key)
             eligible = score_from_cache(
                 self.app.data_db_path,
                 overrides=overrides,
@@ -1364,9 +1625,16 @@ class DashboardScreen(Screen):
         self._load_portfolio()
 
     def action_switch_variant(self) -> None:
-        """Cycle to the next scoring variant and re-score from cache."""
+        """Cycle to the next scoring variant and re-score from cache.
+
+        Skips CUSTOM in cycling since there's no preset to switch to.
+        """
         cur = self.ob_config.variant_key
-        idx = (_VARIANT_KEYS.index(cur) + 1) % len(_VARIANT_KEYS)
+        if cur in _VARIANT_KEYS:
+            idx = (_VARIANT_KEYS.index(cur) + 1) % len(_VARIANT_KEYS)
+        else:
+            # CUSTOM or unknown — start from V1
+            idx = 0
         new_key = _VARIANT_KEYS[idx]
 
         self.ob_config.variant_key = new_key

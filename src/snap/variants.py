@@ -101,6 +101,7 @@ VARIANT_LABELS: dict[str, str] = {
     "V3": "Volume Relaxed",
     "V4": "ROI Heavy",
     "V5": "Hybrid Balanced",
+    "CUSTOM": "Custom",
 }
 
 VARIANT_DESCRIPTIONS: dict[str, str] = {
