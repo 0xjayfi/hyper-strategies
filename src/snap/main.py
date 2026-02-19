@@ -57,7 +57,7 @@ from snap.tui import console, print_portfolio, print_scores, render_status_bar
 logger = logging.getLogger(__name__)
 
 _COMMANDS_HELP = (
-    "[r] Refresh traders  [b] Rebalance  [m] Monitor  "
+    "[r] Refresh traders  [c] Score from cache  [b] Rebalance  [m] Monitor  "
     "[s] Scores  [p] Portfolio  [q] Quit"
 )
 
@@ -185,6 +185,15 @@ async def _input_loop(
             console.print("[dim]Running trader refresh...[/]")
             await scheduler._run_trader_refresh()
             _print_status(scheduler, args)
+        elif key == "c":
+            console.print("[dim]Scoring from cached data (no API calls)...[/]")
+            from snap.scoring import score_from_cache
+
+            eligible = score_from_cache(
+                args.data_db, strategy_db_path=args.strategy_db
+            )
+            console.print(f"[dim]Score from cache complete: {len(eligible)} eligible[/]")
+            print_scores(args.strategy_db)
         elif key == "b":
             console.print("[dim]Running rebalance...[/]")
             await scheduler._run_rebalance()

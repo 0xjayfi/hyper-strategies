@@ -107,7 +107,8 @@ Dashboard keyboard bindings:
 
 | Key | Action |
 |-----|--------|
-| `r` | Refresh trader universe (fetch leaderboard, score, rank) |
+| `r` | Refresh trader universe (skips API if data < 24h old, scores from cache) |
+| `c` | Score from cache only (no API calls, re-scores existing data in DB) |
 | `b` | Run rebalance cycle (snapshot, target, risk overlay, execute) |
 | `m` | Run monitor pass (check stops on all positions) |
 | `s` | Refresh scores table |

@@ -736,6 +736,7 @@ class DashboardScreen(Screen):
 
     BINDINGS = [
         Binding("r", "refresh_traders", "Refresh Traders"),
+        Binding("c", "score_cache", "Score from Cache"),
         Binding("b", "rebalance", "Rebalance"),
         Binding("m", "monitor", "Monitor"),
         Binding("s", "show_scores", "Refresh Scores"),
@@ -1296,6 +1297,37 @@ class DashboardScreen(Screen):
             self._load_scores()
             self._load_portfolio()
             self.notify("Trader refresh complete", title="Refresh", severity="information")
+
+    def action_score_cache(self) -> None:
+        """Score traders from cached data — no API calls."""
+        self._update_status("REFRESHING")
+        self._run_score_cache()
+
+    @work(thread=False)
+    async def _run_score_cache(self) -> None:
+        from snap.scoring import score_from_cache
+        from snap.variants import VARIANTS
+
+        try:
+            overrides = VARIANTS.get(self.ob_config.variant_key)
+            eligible = score_from_cache(
+                self.app.data_db_path,
+                overrides=overrides,
+                strategy_db_path=self.app.db_path,
+            )
+            self._update_status("IDLE")
+            self._load_scores()
+            self._load_portfolio()
+            self.notify(
+                f"Scored from cache: {len(eligible)} eligible",
+                title="Score from Cache",
+                severity="information",
+            )
+            logger.info("Score from cache complete: %d eligible traders", len(eligible))
+        except Exception as e:
+            logger.exception("Score from cache failed")
+            self._update_status("IDLE")
+            self.notify(f"Score from cache failed: {e}", title="Error", severity="error")
 
     def action_rebalance(self) -> None:
         if self.scheduler:

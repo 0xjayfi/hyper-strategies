@@ -1491,12 +1491,53 @@ async def _fetch_avg_leverage(client, address: str) -> float | None:
     return sum(leverages) / len(leverages)
 
 
+def _data_is_fresh(db_path: str, max_age_hours: float = 24.0) -> bool:
+    """Check whether the data DB has traders updated within *max_age_hours*.
+
+    Returns ``True`` if the most recent ``updated_at`` in the ``traders``
+    table is less than *max_age_hours* old, meaning collection can be
+    skipped.
+    """
+    from datetime import datetime, timezone
+
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT MAX(updated_at) AS last_update, COUNT(*) AS cnt FROM traders"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row or not row["cnt"]:
+        return False
+
+    last_update = row["last_update"]
+    if not last_update:
+        return False
+
+    try:
+        dt = datetime.strptime(last_update, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+        age_hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+        logger.info(
+            "Data freshness: %d traders, last update %.1fh ago (max %.0fh)",
+            row["cnt"],
+            age_hours,
+            max_age_hours,
+        )
+        return age_hours < max_age_hours
+    except (ValueError, TypeError):
+        return False
+
+
 async def refresh_trader_universe(
     client,
     db_path: str,
     *,
     strategy_db_path: str | None = None,
     overrides: dict | None = None,
+    force_collect: bool = False,
 ) -> int:
     """Full daily trader refresh orchestrator with percentile-based thresholds.
 
@@ -1504,6 +1545,8 @@ async def refresh_trader_universe(
 
     1. **Data collection** — fetch leaderboard + trades from the API and
        persist to SQLite (``traders`` and ``trade_history`` tables).
+       Skipped if the data DB already has fresh data (< 24h old) unless
+       *force_collect* is ``True``.
     2. **Scoring** — delegate to ``score_from_cache()`` which reads only
        from SQLite.
 
@@ -1520,6 +1563,9 @@ async def refresh_trader_universe(
         Recognised keys: ``FILTER_PERCENTILE``, ``WIN_RATE_MIN``,
         ``WIN_RATE_MAX``, ``TREND_TRADER_MIN_PF``, ``TREND_TRADER_MAX_WR``,
         ``hft_tpd``, ``hft_ahh``, ``position_mult``, ``weights``.
+    force_collect:
+        When ``True``, always fetch fresh data from the API even if the
+        data DB already has recent data.
 
     Returns
     -------
@@ -1530,15 +1576,18 @@ async def refresh_trader_universe(
     _percentile_val = ovr.get("FILTER_PERCENTILE", FILTER_PERCENTILE)
 
     # ------------------------------------------------------------------
-    # Phase A: Data collection — try collector module, fall back to legacy
+    # Phase A: Data collection — skip if data is fresh enough
     # ------------------------------------------------------------------
-    try:
-        from snap.collector import collect_trader_data  # type: ignore[import-not-found]
-        logger.info("Using collector module for data collection")
-        await collect_trader_data(client, db_path)
-    except ImportError:
-        logger.info("collector module not available, using legacy fetch path")
-        await _legacy_collect(client, db_path, percentile=_percentile_val)
+    if not force_collect and _data_is_fresh(db_path):
+        logger.info("Data is fresh, skipping API collection (use force_collect to override)")
+    else:
+        try:
+            from snap.collector import collect_trader_data  # type: ignore[import-not-found]
+            logger.info("Using collector module for data collection")
+            await collect_trader_data(client, db_path)
+        except ImportError:
+            logger.info("collector module not available, using legacy fetch path")
+            await _legacy_collect(client, db_path, percentile=_percentile_val)
 
     # ------------------------------------------------------------------
     # Phase B: Score from cache (no API calls)
