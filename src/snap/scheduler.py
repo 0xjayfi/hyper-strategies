@@ -19,6 +19,7 @@ import asyncio
 import enum
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from snap.config import (
@@ -129,10 +130,14 @@ class SystemScheduler:
         self.db_path = db_path
         self.strategy_db_path = strategy_db_path or db_path
         self._scoring_overrides = scoring_overrides
+        self.refresh_interval_hours: int = 24
 
         self.state = SchedulerState.IDLE
         self._stop_event = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
+
+        # Optional progress callback ``(current, total)`` for trader refresh
+        self.on_refresh_progress: Callable[[int, int], None] | None = None
 
         # Timestamps for cadence tracking
         self._last_trader_refresh: datetime | None = None
@@ -190,6 +195,8 @@ class SystemScheduler:
                 self.db_path,
                 strategy_db_path=self.strategy_db_path,
                 overrides=self._scoring_overrides,
+                force_collect=True,
+                on_progress=self.on_refresh_progress,
             )
             now = datetime.now(timezone.utc)
             self._last_trader_refresh = now
@@ -364,11 +371,11 @@ class SystemScheduler:
     # -- Cadence checks ----------------------------------------------------
 
     def _should_refresh_traders(self, now: datetime) -> bool:
-        """Check if we should run the daily trader refresh."""
+        """Check if we should run the trader refresh."""
         if self._last_trader_refresh is None:
             return True
         elapsed = (now - self._last_trader_refresh).total_seconds()
-        return elapsed >= 24 * 3600
+        return elapsed >= self.refresh_interval_hours * 3600
 
     def _should_rebalance(self, now: datetime) -> bool:
         """Check if we should run a rebalance cycle."""

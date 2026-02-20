@@ -29,6 +29,7 @@ from textual.widgets import (
     RadioSet,
     RichLog,
     Rule,
+    Select,
     Static,
 )
 
@@ -37,6 +38,7 @@ from snap.config import (
     MAX_POSITION_DURATION_HOURS,
     MAX_TOTAL_POSITIONS,
     MONITOR_INTERVAL_SECONDS,
+    POLL_LEADERBOARD_HOURS,
     REBALANCE_INTERVAL_HOURS,
 )
 from snap.database import get_connection
@@ -57,6 +59,7 @@ class OnboardingConfig:
     variant_key: str = "V1"
     start_stage: str = "daily"  # "daily", "rebalance", "monitor"
     rebalance_interval_hours: int = REBALANCE_INTERVAL_HOURS
+    refresh_interval_hours: int = POLL_LEADERBOARD_HOURS  # trader refresh cadence
     max_hold_hours: int = MAX_POSITION_DURATION_HOURS
     monitor_interval_seconds: int = MONITOR_INTERVAL_SECONDS
     account_value: float = ACCOUNT_VALUE
@@ -751,6 +754,19 @@ class OnboardingOptions(Screen):
                 )
 
             with Horizontal(classes="option-row"):
+                yield Label("Trader Refresh Frequency:")
+                yield Select(
+                    [
+                        ("Every 1 day (24h)", 24),
+                        ("Every 3 days (72h)", 72),
+                        ("Weekly (168h)", 168),
+                    ],
+                    value=self.ob_config.refresh_interval_hours,
+                    id="sel-refresh-freq",
+                    allow_blank=False,
+                )
+
+            with Horizontal(classes="option-row"):
                 yield Label("Rebalance Interval (hours):")
                 yield Input(
                     str(self.ob_config.rebalance_interval_hours),
@@ -796,6 +812,12 @@ class OnboardingOptions(Screen):
         try:
             val = self.query_one("#inp-account", Input).value
             self.ob_config.account_value = float(val) if val else ACCOUNT_VALUE
+        except (ValueError, TypeError):
+            pass
+        try:
+            sel_val = self.query_one("#sel-refresh-freq", Select).value
+            if sel_val is not None and sel_val != Select.BLANK:
+                self.ob_config.refresh_interval_hours = int(sel_val)
         except (ValueError, TypeError):
             pass
         try:
@@ -916,6 +938,8 @@ class DashboardScreen(Screen):
         self._last_rebalance_time: datetime | None = None
         self._last_refresh_time: datetime | None = None
         self._current_state: str = "IDLE"
+        self._refresh_progress: tuple[int, int] | None = None  # (current, total)
+        self._fresh_start: bool = False
         self._pnl_history: dict[str, list[float]] = {}
         self._trader_count: int = 0
         self._data_age_str: str = "no data"
@@ -1009,9 +1033,16 @@ class DashboardScreen(Screen):
             style="bold",
         ))
 
-        self._refresh_data_freshness()
-        self._load_portfolio()
-        self._load_scores()
+        if self.ob_config.start_stage == "daily":
+            # Fresh start: show "refreshing..." until the pipeline populates data.
+            # Don't load stale portfolio/scores from previous run.
+            self._data_age_str = "refreshing..."
+            self._fresh_start = True
+        else:
+            self._refresh_data_freshness()
+            self._load_portfolio()
+            self._load_scores()
+            self._fresh_start = False
 
         # Periodic countdown refresh
         self.set_interval(30, self._tick_status)
@@ -1030,6 +1061,8 @@ class DashboardScreen(Screen):
 
     def _load_portfolio(self) -> None:
         """Load portfolio data from the database into the DataTable."""
+        if self._fresh_start:
+            return  # Don't load stale data during fresh start
         ptable = self.query_one("#portfolio-table", DataTable)
         ptable.clear()
         self._row_tokens = []
@@ -1375,7 +1408,7 @@ class DashboardScreen(Screen):
 
         # Compute next refresh countdown
         if self._last_refresh_time is not None:
-            next_refresh = self._last_refresh_time + timedelta(hours=24)
+            next_refresh = self._last_refresh_time + timedelta(hours=self.ob_config.refresh_interval_hours)
             remaining = next_refresh - now
             if remaining.total_seconds() <= 0:
                 refresh_str = "now"
@@ -1388,16 +1421,28 @@ class DashboardScreen(Screen):
         else:
             refresh_str = "pending"
 
+        # Show progress percentage alongside REFRESHING state
+        if state in ("REFRESHING_TRADERS", "REFRESHING") and self._refresh_progress:
+            cur, tot = self._refresh_progress
+            pct = int(100 * cur / tot) if tot > 0 else 0
+            state_display = f"{state} ({pct}%)"
+        else:
+            state_display = state
+
         status_text = (
             f"[black on yellow] PAPER [/]  │  Strategy: {self.ob_config.variant_key} ({variant_label})  │  "
             f"Acct: ${self.ob_config.account_value:,.0f}  │  "
-            f"State: [{state_color}]{state}[/]  │  "
+            f"State: [{state_color}]{state_display}[/]  │  "
             f"Session: {session_str}  │  "
             f"Data: {self._data_age_str}  │  "
             f"Next rebal: {rebal_str}  │  "
             f"Next refresh: {refresh_str}"
         )
         self.query_one("#status-bar", Static).update(status_text)
+
+    def _on_refresh_progress(self, current: int, total: int) -> None:
+        """Callback from collector to update refresh progress."""
+        self._refresh_progress = (current, total)
 
     def _tick_status(self) -> None:
         """Periodic callback to refresh the status bar countdown."""
@@ -1415,8 +1460,11 @@ class DashboardScreen(Screen):
                     self._load_portfolio()
                     self._load_scores()
                 elif new_state == "IDLE" and old == "REFRESHING_TRADERS":
+                    self._refresh_progress = None
+                    self._fresh_start = False
                     self._last_refresh_time = datetime.now(timezone.utc)
                     self._last_data_check = None
+                    self._refresh_data_freshness()
                     self._load_scores()
         self._update_status(self._current_state)
 
@@ -1460,7 +1508,10 @@ class DashboardScreen(Screen):
             logger.info("Running data collection only (no trading)")
             try:
                 from snap.collector import collect_trader_data
-                summary = await collect_trader_data(nansen_client, data_db_path)
+                summary = await collect_trader_data(
+                    nansen_client, data_db_path,
+                    on_progress=self._on_refresh_progress,
+                )
                 logger.info("Collection complete: %s", summary)
                 self.notify(
                     f"Traders: {summary.traders_fetched} | "
@@ -1493,14 +1544,23 @@ class DashboardScreen(Screen):
             strategy_db_path=db_path,
             scoring_overrides=variant_overrides,
         )
+        scheduler.on_refresh_progress = self._on_refresh_progress
+        scheduler.refresh_interval_hours = self.ob_config.refresh_interval_hours
         scheduler.recover_state()
         self.scheduler = scheduler
 
-        # Apply onboarding config to skip stages
+        # Apply onboarding config to control which stages run
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc)
-        if self.ob_config.start_stage == "rebalance":
+        if self.ob_config.start_stage == "daily":
+            # Fresh start: clear recovered timestamps so the full pipeline
+            # runs from scratch (refresh → rebalance → monitor).
+            # Cached trade data is still reused by the collector.
+            scheduler._last_trader_refresh = None
+            scheduler._last_rebalance = None
+            logger.info("Fresh start: will run full pipeline (refresh → rebalance → monitor)")
+        elif self.ob_config.start_stage == "rebalance":
             # Pretend trader refresh just happened so scheduler skips it
             scheduler._last_trader_refresh = now
             set_system_state(
@@ -1549,8 +1609,11 @@ class DashboardScreen(Screen):
     async def _run_refresh(self) -> None:
         if self.scheduler:
             await self.scheduler._run_trader_refresh()
+            self._refresh_progress = None
+            self._fresh_start = False
             self._last_refresh_time = datetime.now(timezone.utc)
             self._last_data_check = None  # Force data freshness update
+            self._refresh_data_freshness()
             self._update_status("IDLE")
             self._load_scores()
             self._load_portfolio()

@@ -55,7 +55,10 @@ MAX_POSITION_DURATION_HOURS: int = 96
 FILTER_PERCENTILE: float = 0.50
 
 # Hard floor for the leaderboard API filter (avoids fetching every trader)
-MIN_ACCOUNT_VALUE: float = 25_000
+MIN_ACCOUNT_VALUE: float = 100_000
+
+# Minimum 30-day PnL to qualify for trade fetching / scoring
+MIN_PNL_30D: float = 10_000
 
 # Safety bounds (not percentile-based — these are absolute limits)
 WIN_RATE_MIN: float = 0.30

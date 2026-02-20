@@ -15,10 +15,11 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from snap.config import MIN_ACCOUNT_VALUE, TRADE_CACHE_TTL_HOURS
+from snap.config import MIN_ACCOUNT_VALUE, MIN_PNL_30D, TRADE_CACHE_TTL_HOURS
 from snap.database import get_connection
 from snap.ingestion import ingest_positions
 
@@ -240,6 +241,7 @@ async def collect_trader_data(
     client,
     db_path: str,
     min_account_value: float = MIN_ACCOUNT_VALUE,
+    on_progress: "Callable[[int, int], None] | None" = None,
 ) -> CollectionSummary:
     """Fetch all trader data from Nansen and cache in SQLite.
 
@@ -259,6 +261,9 @@ async def collect_trader_data(
     min_account_value:
         Minimum account value filter for the leaderboard API and
         qualifying threshold for trade/position fetching.
+    on_progress:
+        Optional callback ``(current, total)`` invoked after each trader
+        is processed in Phase 2.  Used by the TUI to show progress.
 
     Returns
     -------
@@ -291,22 +296,27 @@ async def collect_trader_data(
         addr
         for addr, t in merged.items()
         if t.get("account_value", 0) >= min_account_value
+        and (t.get("pnl_30d") or 0) >= MIN_PNL_30D
     ]
     logger.info(
-        "Phase 2: %d traders qualify (account_value >= %.0f)",
+        "Phase 2: %d traders qualify (account_value >= %.0f, pnl_30d >= %.0f)",
         len(qualifying),
         min_account_value,
+        MIN_PNL_30D,
     )
 
+    total_qualifying = len(qualifying)
     for i, addr in enumerate(qualifying, 1):
         cached = _get_cached_trades(db_path, addr, TRADE_CACHE_TTL_HOURS)
         if cached is not None:
             trades_cached += 1
-            if i % 100 == 0 or i == len(qualifying):
+            if on_progress:
+                on_progress(i, total_qualifying)
+            if i % 100 == 0 or i == total_qualifying:
                 logger.info(
                     "Phase 2 progress: %d/%d (cached=%d, fetched=%d, errors=%d)",
                     i,
-                    len(qualifying),
+                    total_qualifying,
                     trades_cached,
                     trades_fetched,
                     errors,
@@ -329,11 +339,13 @@ async def collect_trader_data(
             )
             errors += 1
 
-        if i % 50 == 0 or i == len(qualifying):
+        if on_progress:
+            on_progress(i, total_qualifying)
+        if i % 50 == 0 or i == total_qualifying:
             logger.info(
                 "Phase 2 progress: %d/%d (cached=%d, fetched=%d, errors=%d)",
                 i,
-                len(qualifying),
+                total_qualifying,
                 trades_cached,
                 trades_fetched,
                 errors,

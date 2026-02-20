@@ -1607,6 +1607,7 @@ async def refresh_trader_universe(
     strategy_db_path: str | None = None,
     overrides: dict | None = None,
     force_collect: bool = False,
+    on_progress: "Callable[[int, int], None] | None" = None,
 ) -> int:
     """Full daily trader refresh orchestrator with percentile-based thresholds.
 
@@ -1653,7 +1654,7 @@ async def refresh_trader_universe(
         try:
             from snap.collector import collect_trader_data  # type: ignore[import-not-found]
             logger.info("Using collector module for data collection")
-            await collect_trader_data(client, db_path)
+            await collect_trader_data(client, db_path, on_progress=on_progress)
         except ImportError:
             logger.info("collector module not available, using legacy fetch path")
             await _legacy_collect(client, db_path, percentile=_percentile_val)

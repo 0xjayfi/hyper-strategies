@@ -303,14 +303,15 @@ class TestCollectTraderData:
 
         client = AsyncMock()
 
-        # Phase 1: Leaderboard returns 2 traders
+        # Phase 1: Leaderboard returns 2 traders (on 30d with pnl qualifying)
         client.get_leaderboard = AsyncMock(
             side_effect=[
+                [],  # 7d empty
                 [
-                    _make_leaderboard_entry("0xaaa", account_value=50000),
-                    _make_leaderboard_entry("0xbbb", account_value=30000),
+                    _make_leaderboard_entry("0xaaa", account_value=50000, total_pnl=20000),
+                    _make_leaderboard_entry("0xbbb", account_value=30000, total_pnl=15000),
                 ],
-                [], [],  # 30d, 90d empty
+                [],  # 90d empty
             ]
         )
 
@@ -351,8 +352,9 @@ class TestCollectTraderData:
         client = AsyncMock()
         client.get_leaderboard = AsyncMock(
             side_effect=[
-                [_make_leaderboard_entry("0xaaa", account_value=50000)],
-                [], [],
+                [],  # 7d
+                [_make_leaderboard_entry("0xaaa", account_value=50000, total_pnl=20000)],
+                [],  # 90d
             ]
         )
         client.get_perp_positions = AsyncMock(
@@ -374,8 +376,9 @@ class TestCollectTraderData:
         client = AsyncMock()
         client.get_leaderboard = AsyncMock(
             side_effect=[
-                [_make_leaderboard_entry("0xaaa", account_value=50000)],
-                [], [],
+                [],  # 7d
+                [_make_leaderboard_entry("0xaaa", account_value=50000, total_pnl=20000)],
+                [],  # 90d
             ]
         )
         client.get_perp_trades = AsyncMock(side_effect=Exception("API error"))
@@ -396,11 +399,12 @@ class TestCollectTraderData:
         client = AsyncMock()
         client.get_leaderboard = AsyncMock(
             side_effect=[
+                [],  # 7d
                 [
-                    _make_leaderboard_entry("0xrich", account_value=100000),
-                    _make_leaderboard_entry("0xpoor", account_value=1000),
+                    _make_leaderboard_entry("0xrich", account_value=100000, total_pnl=20000),
+                    _make_leaderboard_entry("0xpoor", account_value=1000, total_pnl=20000),
                 ],
-                [], [],
+                [],  # 90d
             ]
         )
         client.get_perp_trades = AsyncMock(return_value=[_make_trade()])
@@ -410,7 +414,7 @@ class TestCollectTraderData:
 
         summary = await collect_trader_data(client, db_path, min_account_value=50000)
 
-        # Only 0xrich qualifies for trade fetching
+        # Only 0xrich qualifies for trade fetching (acct >= 50k AND pnl_30d >= 10k)
         assert summary.trades_fetched == 1
 
 
