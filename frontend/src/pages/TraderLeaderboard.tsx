@@ -1,3 +1,35 @@
+/**
+ * Trader Leaderboard Page
+ *
+ * Ranked list of traders with scores, PnL, ROI, win rate, profit factor,
+ * anti-luck status, and allocation weights.  Clicking a row shows a radar
+ * chart sidebar and navigates to the trader detail page.
+ *
+ * Data source: Dual-source (SQLite DB preferred, Nansen API fallback).
+ *   GET /api/v1/leaderboard?timeframe=X&token=Y&sort_by=Z
+ *   ->  backend/routers/leaderboard.py
+ *
+ * How data is fetched:
+ *   Path 1 — DataStore (preferred, when allocation engine has run):
+ *     1. Reads trader_scores table for composite scores + anti-luck status.
+ *     2. Reads trade_metrics table for win_rate, profit_factor, trade count,
+ *        total PnL, ROI proxy.
+ *     3. Reads allocations table for current allocation weights.
+ *     4. Sorts by score (default), PnL, or ROI.
+ *
+ *   Path 2 — Nansen fallback (when no DataStore scores exist):
+ *     1. Calls nansen_client.fetch_leaderboard() or fetch_pnl_leaderboard()
+ *        for the selected timeframe + optional token filter.
+ *     2. Returns raw PnL/ROI rankings without scores or anti-luck data.
+ *
+ * Auto-refresh: every 1 hour (5 min stale time).
+ *
+ * UI components:
+ *   - Timeframe toggle (7d/30d/90d) + token dropdown (TimeframeToggle)
+ *   - Info banner when scores are unavailable
+ *   - Sortable leaderboard table (LeaderboardTable)
+ *   - Score radar chart sidebar on row selection (ScoreRadarChart)
+ */
 import { useState } from 'react';
 import { useLeaderboard } from '../api/hooks';
 import { TOKENS } from '../lib/constants';
@@ -45,6 +77,31 @@ export function TraderLeaderboard() {
   return (
     <PageLayout
       title="Trader Leaderboard"
+      description={`Ranked list of traders with composite scores, PnL, ROI, win rate, profit factor, anti-luck status, and allocation weights.
+
+Column definitions:
+  # — Rank by the current sort order (default: Score descending).
+  Trader — Nansen label (if available) and truncated 0x address.
+  PnL — Total realised profit/loss in USD over the selected timeframe.
+  ROI% — Return on investment as a percentage (PnL / account value proxy).
+  Win Rate — Percentage of closed trades that were profitable (30d window).
+  Profit Factor — Gross profit / gross loss. >1.0 means profitable overall; "—" if no losses recorded.
+  Trades — Number of closed trades in the 30d window.
+  Anti-Luck — Green = passed all anti-luck gates (30d PnL >$500, 90d PnL >$1k, ROI >0%, win rate 25-90%, profit factor >1.1, >=10 trades, no recent liquidation). Red = failed one or more gates.
+  Score — Composite score (0–1) combining ROI (25%), Sharpe (20%), Consistency (20%), Win Rate (15%), Smart Money (10%), Risk Mgmt (10%), multiplied by style and recency factors.
+  Weight — Allocation weight assigned by the engine. Only the top 5 scoring traders that pass anti-luck receive a weight; others show "—".
+
+Data source: Dual-source — SQLite DB preferred, Nansen API fallback.
+Endpoint: GET /api/v1/leaderboard?timeframe=X&token=Y&sort_by=Z → backend/routers/leaderboard.py
+
+How it works:
+Path 1 — DataStore (when allocation engine has run):
+  Reads trader_scores for composite scores + anti-luck, trade_metrics for win rate/profit factor/PnL/ROI, and allocations for current weights. Sorts by score (default), PnL, or ROI.
+
+Path 2 — Nansen fallback (when no scores exist):
+  Calls Nansen leaderboard API for the selected timeframe + optional token filter. Returns raw PnL/ROI rankings without scores or anti-luck data.
+
+Auto-refresh: every 1 hour.`}
       lastUpdated={lastUpdated}
       onRefresh={() => refetch()}
       isRefreshing={isFetching}

@@ -68,8 +68,16 @@ def _build_allocations_from_db(ds: DataStore) -> tuple[list[dict], str | None]:
             "roi_tier": roi_tier,
         })
 
-    # Sort by weight descending for readability.
+    # Sort by weight descending and enforce the position cap.
     entries.sort(key=lambda e: e["weight"], reverse=True)
+    entries = entries[:MAX_TOTAL_POSITIONS]
+
+    # Renormalise weights so they sum to 1.0 after truncation.
+    total = sum(e["weight"] for e in entries)
+    if total > 0:
+        for e in entries:
+            e["weight"] = e["weight"] / total
+
     return entries, None  # computed_at not exposed by get_latest_allocations
 
 
@@ -184,6 +192,20 @@ async def get_strategies(
 # ---------------------------------------------------------------------------
 
 
+def _cap_portfolio_total(entries: list[dict], total_usd: float = 50_000.0) -> None:
+    """Normalize *entries* so target_usd sums to *total_usd* and weights sum to 1.0.
+
+    Mutates *entries* in place.
+    """
+    current_total = sum(e["target_usd"] for e in entries)
+    if current_total <= 0:
+        return
+    for e in entries:
+        proportion = e["target_usd"] / current_total
+        e["target_weight"] = round(proportion, 4)
+        e["target_usd"] = round(proportion * total_usd, 2)
+
+
 def _try_build_index_portfolio(entries: list[dict], ds: DataStore) -> list[dict]:
     """Build index portfolio from real allocations and positions.
 
@@ -206,17 +228,22 @@ def _try_build_index_portfolio(entries: list[dict], ds: DataStore) -> list[dict]
             allocations, trader_positions, _DEFAULT_ACCOUNT_VALUE
         )
 
-        # Convert {token: signed_usd} into list[dict] for schema.
-        total_abs = sum(abs(v) for v in raw_portfolio.values()) or 1.0
+        # Convert {(token, side): usd} into list[dict] for schema.
+        total_abs = sum(raw_portfolio.values()) or 1.0
         result = []
-        for token, target_usd in raw_portfolio.items():
-            side = "Long" if target_usd >= 0 else "Short"
+        for (token, side), target_usd in raw_portfolio.items():
             result.append({
                 "token": token,
                 "side": side,
-                "target_weight": round(abs(target_usd) / total_abs, 4),
-                "target_usd": round(abs(target_usd), 2),
+                "target_weight": round(target_usd / total_abs, 4),
+                "target_usd": round(target_usd, 2),
             })
+
+        # Keep only top 10 by target_usd, capped at $50k total.
+        result.sort(key=lambda e: e["target_usd"], reverse=True)
+        result = result[:10]
+        _cap_portfolio_total(result, total_usd=50_000.0)
+
         return result or generate_mock_index_portfolio()
     except Exception:
         logger.exception("Failed to build index portfolio from live data")
@@ -250,13 +277,15 @@ def _try_build_consensus(entries: list[dict], ds: DataStore) -> dict:
         consensus: dict[str, dict] = {}
         for token in sorted(tokens):
             result = weighted_consensus(token, allocations, trader_positions)
+            # Skip tokens with fewer than 3 voters — not a real consensus.
+            if result["participating_traders"] < 3:
+                continue
             total = result["long_weight"] + result["short_weight"]
             if total > 0:
                 direction = "Long" if result["long_weight"] >= result["short_weight"] else "Short"
                 confidence = round(max(result["long_weight"], result["short_weight"]) / total, 2)
             else:
-                direction = "Long"
-                confidence = 0.5
+                continue
             consensus[token] = {
                 "direction": direction,
                 "confidence": confidence,

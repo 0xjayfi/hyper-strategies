@@ -1,3 +1,42 @@
+/**
+ * Allocation Dashboard Page
+ *
+ * Displays the output of the PnL-weighted allocation engine: who the system
+ * is allocating capital to, how much, and the derived strategy signals.
+ *
+ * Data source: SQLite DB only (zero Nansen API calls). Falls back to mock
+ * data if the DB is empty.
+ *   GET /api/v1/allocations             ->  backend/routers/allocations.py
+ *   GET /api/v1/allocations/strategies  ->  same router (called in parallel)
+ *
+ * How data is fetched:
+ *   /allocations endpoint:
+ *     1. Reads allocations table for {address: final_weight} mapping.
+ *     2. Enriches with labels from traders table and roi_tier from
+ *        trader_scores table.
+ *     3. Sorts by weight descending, caps at MAX_TOTAL_POSITIONS (5).
+ *     4. Computes risk cap utilisation (position count, max exposure,
+ *        directional long/short estimates).
+ *
+ *   /allocations/strategies endpoint:
+ *     1. Index Portfolio — build_index_portfolio() weight-averages all
+ *        trader positions (from position_snapshots) by allocation weight,
+ *        normalised to 50% of $100k account value.
+ *     2. Consensus — weighted_consensus() per token, aggregating long vs
+ *        short exposure weighted by allocation. Requires >= 3 voters.
+ *     3. Sizing — per-trader max_size_usd = weight * $100k account value.
+ *
+ * Auto-refresh: every 1 hour (5 min stale time).
+ *
+ * UI components:
+ *   - Allocation weights donut chart (WeightsDonut)
+ *   - Risk cap gauge bars (RiskGauges)
+ *   - Allocation over time stacked area chart (AllocationTimeline)
+ *   - Tabbed strategy section:
+ *       Tab 1: Index Portfolio table (IndexPortfolioTable)
+ *       Tab 2: Consensus cards per token (ConsensusCards)
+ *       Tab 3: Interactive sizing calculator (SizingCalculator)
+ */
 import { useState } from 'react';
 import { Info } from 'lucide-react';
 import { useAllocations, useAllocationStrategies } from '../api/hooks';
@@ -28,6 +67,22 @@ export function AllocationDashboard() {
   return (
     <PageLayout
       title="Allocation Dashboard"
+      description={`Output of the PnL-weighted allocation engine: who the system allocates capital to, how much, and the derived strategy signals.
+
+Data source: SQLite DB only (zero Nansen API calls). Falls back to mock data if DB is empty.
+Endpoints (called in parallel):
+  GET /api/v1/allocations → allocation weights + risk caps
+  GET /api/v1/allocations/strategies → index portfolio, consensus, sizing
+
+How it works:
+/allocations — Reads allocations table, enriches with labels + ROI tier from trader_scores. Sorts by weight, caps at top 5 (MAX_TOTAL_POSITIONS). Computes risk cap utilisation.
+
+/allocations/strategies:
+  Index Portfolio — Weight-averages all trader positions by allocation, normalised to 50% of $100k account.
+  Consensus — Per-token weighted vote (long vs short), requires >= 3 voters.
+  Sizing — Per-trader max_size_usd = weight * account value.
+
+Auto-refresh: every 1 hour.`}
       lastUpdated={lastUpdated}
       onRefresh={() => { alloc.refetch(); strat.refetch(); }}
       isRefreshing={alloc.isFetching || strat.isFetching}

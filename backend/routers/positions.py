@@ -39,7 +39,7 @@ async def get_positions(
     label_type: LabelTypeEnum = LabelTypeEnum.all_traders,
     side: SideEnum | None = None,
     min_position_usd: float = Query(default=0, ge=0),
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=50, ge=1, le=100),
     nansen_client: NansenClient = Depends(get_nansen_client),
     cache: CacheLayer = Depends(get_cache),
 ) -> PositionResponse:
@@ -107,7 +107,7 @@ async def get_positions(
     # Compute meta
     total_long = sum(p.position_value_usd for p in result_positions if p.side == "Long")
     total_short = sum(p.position_value_usd for p in result_positions if p.side == "Short")
-    ls_ratio = total_long / total_short if total_short > 0 else float("inf") if total_long > 0 else 0.0
+    ls_ratio = total_long / total_short if total_short > 0 else 0.0
     sm_count = sum(1 for p in result_positions if p.is_smart_money)
 
     meta = PositionMeta(

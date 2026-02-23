@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { Fragment, useState, useMemo } from 'react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -166,7 +166,7 @@ export function PositionTable({ data }: PositionTableProps) {
         </thead>
         <tbody>
           {_rows.map((row) => (
-            <tbody key={row.id}>
+            <Fragment key={row.id}>
               <tr
                 className="cursor-pointer border-b border-border transition-colors hover:bg-card/50"
                 onClick={() => toggleRow(row.index)}
@@ -184,7 +184,7 @@ export function PositionTable({ data }: PositionTableProps) {
                   </td>
                 </tr>
               )}
-            </tbody>
+            </Fragment>
           ))}
         </tbody>
       </table>

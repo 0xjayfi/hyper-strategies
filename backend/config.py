@@ -12,4 +12,5 @@ CACHE_TTL_LEADERBOARD = int(os.getenv("CACHE_TTL_LEADERBOARD", "3600"))  # 1 hou
 CACHE_TTL_TRADER = int(os.getenv("CACHE_TTL_TRADER", "600"))  # 10 min
 CACHE_TTL_ALLOCATIONS = int(os.getenv("CACHE_TTL_ALLOCATIONS", "3600"))  # 1 hour
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
-FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+_raw_origins = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]

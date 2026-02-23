@@ -147,7 +147,9 @@ def apply_turnover_limits(
     (15 pp) per rebalance.
     """
     result: dict[str, float] = {}
-    all_addrs = set(new_weights.keys()) | set(old_weights.keys())
+    # Only consider addresses in new_weights (post risk-cap).  Addresses
+    # removed by apply_risk_caps must NOT be re-introduced here.
+    all_addrs = set(new_weights.keys())
 
     for addr in all_addrs:
         new_w = new_weights.get(addr, 0.0)

@@ -96,7 +96,11 @@ const columns = [
     header: 'Anti-Luck',
     cell: (info) => <FilterBadges status={info.getValue()} />,
     size: 80,
-    enableSorting: false,
+    sortingFn: (rowA, rowB) => {
+      const a = rowA.original.anti_luck_status?.passed ? 1 : 0;
+      const b = rowB.original.anti_luck_status?.passed ? 1 : 0;
+      return a - b;
+    },
   }),
   columnHelper.accessor('score', {
     header: 'Score',

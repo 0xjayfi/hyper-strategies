@@ -57,14 +57,13 @@ class TestBuildIndexPortfolio:
         positions = {"A": [_pos("BTC", "Long", 1000)]}
         result = build_index_portfolio(allocations, positions, 10000)
         # Only one token, exposure = 1000*1.0 = 1000, scale = 5000/1000 = 5
-        assert result["BTC"] == pytest.approx(5000.0)
+        assert result[("BTC", "Long")] == pytest.approx(5000.0)
 
     def test_basic_short(self):
         allocations = {"A": 1.0}
         positions = {"A": [_pos("ETH", "Short", 2000)]}
         result = build_index_portfolio(allocations, positions, 10000)
-        assert result["ETH"] < 0  # short
-        assert result["ETH"] == pytest.approx(-5000.0)
+        assert result[("ETH", "Short")] == pytest.approx(5000.0)
 
     def test_mixed_positions(self):
         allocations = {"A": 0.6, "B": 0.4}
@@ -73,9 +72,13 @@ class TestBuildIndexPortfolio:
             "B": [_pos("BTC", "Short", 500)],
         }
         result = build_index_portfolio(allocations, positions, 10000)
-        # Raw: BTC = 1000*0.6 - 500*0.4 = 600 - 200 = 400 (long)
-        # Total exposure = 400, scale = 5000/400 = 12.5
-        assert result["BTC"] == pytest.approx(5000.0)
+        # Long and short kept as separate line items
+        # Raw: BTC Long = 1000*0.6 = 600, BTC Short = 500*0.4 = 200
+        # Total exposure = 800, scale = 5000/800 = 6.25
+        assert ("BTC", "Long") in result
+        assert ("BTC", "Short") in result
+        assert result[("BTC", "Long")] == pytest.approx(600 * 6.25)
+        assert result[("BTC", "Short")] == pytest.approx(200 * 6.25)
 
     def test_multiple_tokens(self):
         allocations = {"A": 0.5, "B": 0.5}
@@ -84,16 +87,16 @@ class TestBuildIndexPortfolio:
             "B": [_pos("ETH", "Long", 1000)],
         }
         result = build_index_portfolio(allocations, positions, 10000)
-        assert "BTC" in result
-        assert "ETH" in result
-        total_exposure = sum(abs(v) for v in result.values())
+        assert ("BTC", "Long") in result
+        assert ("ETH", "Long") in result
+        total_exposure = sum(result.values())
         assert total_exposure == pytest.approx(5000.0)
 
     def test_scales_to_50_pct_of_account(self):
         allocations = {"A": 1.0}
         positions = {"A": [_pos("BTC", "Long", 50000)]}
         result = build_index_portfolio(allocations, positions, 20000)
-        assert abs(result["BTC"]) == pytest.approx(10000.0)  # 50% of 20k
+        assert result[("BTC", "Long")] == pytest.approx(10000.0)  # 50% of 20k
 
     def test_empty_allocations(self):
         result = build_index_portfolio({}, {}, 10000)
@@ -103,8 +106,8 @@ class TestBuildIndexPortfolio:
         allocations = {"A": 0.5, "B": 0.5}
         positions = {"A": [_pos("BTC", "Long", 1000)]}  # B has no positions
         result = build_index_portfolio(allocations, positions, 10000)
-        assert "BTC" in result
-        assert result["BTC"] > 0
+        assert ("BTC", "Long") in result
+        assert result[("BTC", "Long")] > 0
 
 
 # ---------------------------------------------------------------------------

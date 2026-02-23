@@ -1,3 +1,29 @@
+/**
+ * Market Overview Page
+ *
+ * Shows a high-level snapshot of 4 tokens (BTC, ETH, SOL, HYPE) with
+ * smart money consensus and aggregate flow data.
+ *
+ * Data source: Live Nansen API only (no SQLite DB).
+ *   GET /api/v1/market-overview  ->  backend/routers/market.py
+ *
+ * How data is fetched:
+ *   1. Backend fires concurrent Nansen requests per token:
+ *      - fetch_token_perp_positions (smart_money label)
+ *      - fetch_token_perp_positions (all_traders label)
+ *      - fetch_perp_screener (funding, OI, volume)
+ *   2. Aggregates per-token stats: L/S ratio, total position value,
+ *      top trader by size, funding rate, OI, 24h volume.
+ *   3. Computes smart money consensus per token (direction + confidence)
+ *      and aggregate smart money flow across all tokens.
+ *
+ * Auto-refresh: every 5 minutes (60s stale time).
+ *
+ * UI components:
+ *   - Token cards grid (TokenCard)
+ *   - Smart money consensus chips (ConsensusIndicator)
+ *   - Smart money flow summary bar (SmartMoneyFlowSummary)
+ */
 import { useMarketOverview } from '../api/hooks';
 import { PageLayout } from '../components/layout/PageLayout';
 import { TokenCard } from '../components/market/TokenCard';
@@ -16,6 +42,17 @@ export function MarketOverview() {
   return (
     <PageLayout
       title="Market Overview"
+      description={`Live snapshot of 4 tokens (BTC, ETH, SOL, HYPE) with smart money consensus and aggregate flow data.
+
+Data source: Live Nansen API (no database).
+Endpoint: GET /api/v1/market-overview → backend/routers/market.py
+
+How it works:
+1. Backend fires concurrent Nansen requests per token — smart money positions, all-trader positions, and perp screener (funding, OI, volume).
+2. Aggregates per-token stats: L/S ratio, total position value, top trader by size, funding rate.
+3. Computes smart money consensus per token (direction + confidence %) and aggregate smart money flow across all tokens.
+
+Auto-refresh: every 5 minutes.`}
       lastUpdated={lastUpdated}
       onRefresh={() => refetch()}
       isRefreshing={isFetching}

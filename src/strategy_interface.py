@@ -60,15 +60,17 @@ def build_index_portfolio(
     allocations: dict[str, float],
     trader_positions: dict[str, list],
     my_account_value: float
-) -> dict[str, float]:
+) -> dict[tuple[str, str], float]:
     """
     Build target portfolio by weighting each trader's positions by allocation weight.
 
     Strategy #2: Index Portfolio Rebalancing
 
     Constructs an aggregated portfolio where each trader's positions are scaled by
-    their allocation weight. The resulting portfolio is normalized to use 50% of
-    the account value as total exposure.
+    their allocation weight.  Long and short exposures for the same token are kept
+    as **separate line items** so that opposing views across traders remain visible.
+    The resulting portfolio is normalized to use 50% of the account value as total
+    exposure.
 
     Args:
         allocations: {trader_address: weight} mapping
@@ -77,28 +79,27 @@ def build_index_portfolio(
         my_account_value: Total account value in USD
 
     Returns:
-        Dictionary mapping token symbols to target position sizes in USD.
-        Positive values = long, negative values = short.
+        Dictionary mapping ``(token_symbol, side)`` tuples to target position
+        sizes in USD (always positive).
 
     Example:
         >>> allocations = {"0xabc": 0.6, "0xdef": 0.4}
         >>> positions = {
         ...     "0xabc": [{"token_symbol": "BTC", "side": "Long", "position_value_usd": 1000}],
-        ...     "0xdef": [{"token_symbol": "ETH", "side": "Short", "position_value_usd": 500}]
+        ...     "0xdef": [{"token_symbol": "BTC", "side": "Short", "position_value_usd": 500}]
         ... }
         >>> build_index_portfolio(allocations, positions, 10000)
-        {"BTC": 3000.0, "ETH": -1000.0}  # scaled to 50% of account
+        {("BTC", "Long"): 3000.0, ("BTC", "Short"): 1000.0}
     """
-    portfolio = defaultdict(float)
+    portfolio: dict[tuple[str, str], float] = defaultdict(float)
 
     for trader_addr, weight in allocations.items():
         positions = trader_positions.get(trader_addr, [])
         for pos in positions:
-            direction = 1.0 if pos["side"] == "Long" else -1.0
-            target_usd = pos["position_value_usd"] * weight * direction
-            portfolio[pos["token_symbol"]] += target_usd
+            key = (pos["token_symbol"], pos["side"])
+            portfolio[key] += pos["position_value_usd"] * weight
 
-    total_exposure = sum(abs(v) for v in portfolio.values())
+    total_exposure = sum(portfolio.values())
     if total_exposure > 0:
         scale = (my_account_value * 0.50) / total_exposure
         portfolio = {k: v * scale for k, v in portfolio.items()}

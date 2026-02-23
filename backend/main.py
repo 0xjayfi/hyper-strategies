@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.cache import CacheLayer
-from backend.config import FRONTEND_ORIGIN, NANSEN_API_KEY, NANSEN_BASE_URL
+from backend.config import ALLOWED_ORIGINS, NANSEN_API_KEY, NANSEN_BASE_URL
 from backend.routers import allocations, health, leaderboard, market, positions, screener, traders
 from src.datastore import DataStore
 from src.nansen_client import NansenAPIError, NansenClient, NansenRateLimitError
@@ -54,7 +54,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_ORIGIN],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

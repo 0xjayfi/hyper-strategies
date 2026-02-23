@@ -1,3 +1,28 @@
+/**
+ * Position Explorer Page
+ *
+ * Browse individual perpetual positions for a selected token, with filters
+ * for side (Long/Short) and smart money only.
+ *
+ * Data source: Live Nansen API (cached server-side for 5 min).
+ *   GET /api/v1/positions?token=X&side=Y&label_type=Z
+ *   ->  backend/routers/positions.py
+ *
+ * How data is fetched:
+ *   1. Backend calls nansen_client.fetch_token_perp_positions() for the
+ *      selected token + label_type, fetching up to 100 positions.
+ *   2. Response is cached by (token, label_type) key for 5 minutes.
+ *   3. Server-side filtering is applied for side and min_position_usd.
+ *   4. Meta stats are computed from the filtered result set: total long
+ *      value, total short value, L/S ratio, smart money count.
+ *
+ * Auto-refresh: every 5 minutes (60s stale time).
+ *
+ * UI components:
+ *   - Filter bar: token selector, side toggle, smart money checkbox (PositionFilters)
+ *   - Meta summary strip: total long, total short, L/S ratio, SM count
+ *   - Sortable position table with expandable row details (PositionTable)
+ */
 import { useState, useMemo } from 'react';
 import type { Side } from '../api/types';
 import { usePositions } from '../api/hooks';
@@ -32,6 +57,18 @@ export function PositionExplorer() {
   return (
     <PageLayout
       title="Position Explorer"
+      description={`Browse individual perpetual positions for a selected token, with filters for side (Long/Short) and smart money only.
+
+Data source: Live Nansen API (cached server-side for 5 min).
+Endpoint: GET /api/v1/positions?token=X&side=Y&label_type=Z → backend/routers/positions.py
+
+How it works:
+1. Backend calls Nansen fetch_token_perp_positions() for the selected token + label type, fetching up to 100 positions.
+2. Response is cached by (token, label_type) for 5 minutes.
+3. Server-side filtering applied for side and min position USD, then truncated to limit (default 50).
+4. Meta stats computed from the filtered set: total long/short value, L/S ratio, smart money count.
+
+Auto-refresh: every 5 minutes.`}
       lastUpdated={lastUpdated}
       onRefresh={() => refetch()}
       isRefreshing={isFetching}
