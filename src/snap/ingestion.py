@@ -22,12 +22,11 @@ from snap.database import get_connection
 logger = logging.getLogger(__name__)
 
 # Per-timeframe leaderboard config: (days, min_total_pnl).
-# min_total_pnl is 0 for all timeframes so percentile-based thresholds can be
-# computed from the full population.
+# 30d/90d thresholds tighten initial screening from ~3000 to ~1500 traders.
 _LEADERBOARD_RANGES: dict[str, tuple[int, float]] = {
     "7d": (7, 0),
-    "30d": (30, 0),
-    "90d": (90, 0),
+    "30d": (30, 10_000),
+    "90d": (90, 50_000),
 }
 
 
@@ -36,7 +35,7 @@ async def ingest_leaderboard(client, db_path: str) -> int:
 
     For each date range the function:
     - Computes ``date_from = today - N days`` and ``date_to = today``.
-    - Applies filters: ``account_value.min = 50_000``, ``total_pnl.min = 0``.
+    - Applies filters: ``account_value.min = 100_000``, ``total_pnl.min`` per-timeframe (0 / 10k / 50k).
     - Paginates through all pages via ``client.get_leaderboard``.
 
     Results are merged by ``trader_address``:

@@ -31,12 +31,16 @@ from textual.widgets import (
     Rule,
     Select,
     Static,
+    TabbedContent,
+    TabPane,
 )
 
 from snap.config import (
     ACCOUNT_VALUE,
     MAX_POSITION_DURATION_HOURS,
     MAX_TOTAL_POSITIONS,
+    MIN_ACCOUNT_VALUE,
+    MIN_PNL_30D,
     MONITOR_INTERVAL_SECONDS,
     POLL_LEADERBOARD_HOURS,
     REBALANCE_INTERVAL_HOURS,
@@ -340,7 +344,7 @@ DashboardScreen #scores-panel {
     height: 100%;
 }
 
-DashboardScreen #log-panel {
+DashboardScreen #info-center {
     column-span: 2;
     border: tall $secondary;
     height: 14;
@@ -352,6 +356,12 @@ DashboardScreen DataTable {
 
 DashboardScreen RichLog {
     height: 1fr;
+}
+
+DashboardScreen #traders-summary, DashboardScreen #rebalance-summary {
+    height: 1fr;
+    padding: 0 1;
+    overflow-y: auto;
 }
 
 DashboardScreen .panel-title {
@@ -668,6 +678,7 @@ class OnboardingStrategy(Screen):
 _STAGES = [
     ("collect", "Collect Data Only", "Fetch leaderboard and trade data from Nansen API without scoring or trading. Use this to pre-cache data for strategy experiments."),
     ("daily", "Fresh Start (Daily Flow)", "Run the full pipeline from the beginning: fetch leaderboard, score traders, then rebalance and monitor."),
+    ("score_cache", "Score & Rebalance (No API)", "Score traders from cached data (no API calls), then rebalance and monitor. Use when data is already collected."),
     ("rebalance", "From Rebalancing", "Skip trader refresh. Assumes traders are already scored in the database. Starts from position snapshot and rebalancing."),
     ("monitor", "Monitor Only", "Skip both refresh and rebalance. Only run the position monitor loop to check stop-loss and trailing stops on existing positions."),
 ]
@@ -975,10 +986,14 @@ class DashboardScreen(Screen):
             yield DataTable(id="scores-table")
             yield Static("", id="scores-info", classes="panel-info")
 
-        # Row 3: Log panel (full width, bottom strip)
-        with Vertical(id="log-panel"):
-            yield Static(" Logs", classes="panel-title")
-            yield RichLog(id="log-view", highlight=True, markup=True, wrap=True)
+        # Row 3: Info center (full width, bottom strip)
+        with TabbedContent(id="info-center"):
+            with TabPane("Logs", id="tab-logs"):
+                yield RichLog(id="log-view", highlight=True, markup=True, wrap=True)
+            with TabPane("Traders", id="tab-traders"):
+                yield Static("Loading...", id="traders-summary")
+            with TabPane("Rebalance", id="tab-rebalance"):
+                yield Static("Loading...", id="rebalance-summary")
 
         yield Footer()
 
@@ -1044,9 +1059,12 @@ class DashboardScreen(Screen):
             self._load_scores()
             self._fresh_start = False
 
+        self._load_traders_summary()
+        self._load_rebalance_summary()
+
         # Periodic countdown refresh
         self.set_interval(30, self._tick_status)
-        self.set_interval(60, self._load_portfolio)
+        self.set_interval(60, self._periodic_refresh)
 
         self.notify("Dashboard ready", title="SNAP", severity="information")
 
@@ -1344,8 +1362,11 @@ class DashboardScreen(Screen):
         try:
             conn = get_connection(self.app.data_db_path)
             try:
+                # Count only traders from the most recent leaderboard pull
                 row = conn.execute(
-                    "SELECT COUNT(*) as cnt, MAX(updated_at) as last_update FROM traders"
+                    """SELECT COUNT(*) as cnt, MAX(updated_at) as last_update
+                       FROM traders
+                       WHERE updated_at = (SELECT MAX(updated_at) FROM traders)"""
                 ).fetchone()
             finally:
                 conn.close()
@@ -1372,6 +1393,260 @@ class DashboardScreen(Screen):
             self._last_data_check = datetime.now(timezone.utc)
         except Exception:
             pass  # Don't crash the status bar over a DB error
+
+    def _periodic_refresh(self) -> None:
+        """Periodic callback combining portfolio + rebalance summary refresh."""
+        self._load_portfolio()
+        self._load_rebalance_summary()
+
+    def _load_traders_summary(self) -> None:
+        """Load trader scoring pipeline summary into the Traders tab."""
+        widget = self.query_one("#traders-summary", Static)
+        try:
+            conn = get_connection(self.app.db_path)
+            try:
+                # Get latest scores per address
+                total = conn.execute(
+                    "SELECT COUNT(DISTINCT address) FROM trader_scores"
+                ).fetchone()[0] or 0
+
+                tier1 = conn.execute(
+                    """SELECT COUNT(DISTINCT address) FROM trader_scores
+                       WHERE passes_tier1 = 1 AND id IN (
+                           SELECT MAX(id) FROM trader_scores GROUP BY address
+                       )"""
+                ).fetchone()[0] or 0
+
+                consistency = conn.execute(
+                    """SELECT COUNT(DISTINCT address) FROM trader_scores
+                       WHERE passes_consistency = 1 AND id IN (
+                           SELECT MAX(id) FROM trader_scores GROUP BY address
+                       )"""
+                ).fetchone()[0] or 0
+
+                quality = conn.execute(
+                    """SELECT COUNT(DISTINCT address) FROM trader_scores
+                       WHERE passes_quality = 1 AND id IN (
+                           SELECT MAX(id) FROM trader_scores GROUP BY address
+                       )"""
+                ).fetchone()[0] or 0
+
+                eligible = conn.execute(
+                    """SELECT COUNT(DISTINCT address) FROM trader_scores
+                       WHERE is_eligible = 1 AND id IN (
+                           SELECT MAX(id) FROM trader_scores GROUP BY address
+                       )"""
+                ).fetchone()[0] or 0
+
+                # Style distribution of eligible
+                style_rows = conn.execute(
+                    """SELECT style, COUNT(*) as cnt FROM trader_scores
+                       WHERE is_eligible = 1 AND id IN (
+                           SELECT MAX(id) FROM trader_scores GROUP BY address
+                       )
+                       GROUP BY style ORDER BY cnt DESC"""
+                ).fetchall()
+
+                # Top 5 eligible by score
+                top5 = conn.execute(
+                    """SELECT address, composite_score, style FROM trader_scores
+                       WHERE is_eligible = 1 AND id IN (
+                           SELECT MAX(id) FROM trader_scores GROUP BY address
+                       )
+                       ORDER BY composite_score DESC LIMIT 5"""
+                ).fetchall()
+
+                # Last scored timestamp
+                last_scored = conn.execute(
+                    "SELECT MAX(scored_at) FROM trader_scores"
+                ).fetchone()[0] or "never"
+
+                # Fail reason distribution (top 5)
+                fail_rows = conn.execute(
+                    """SELECT fail_reason, COUNT(*) as cnt FROM trader_scores
+                       WHERE is_eligible = 0 AND fail_reason IS NOT NULL
+                       AND id IN (SELECT MAX(id) FROM trader_scores GROUP BY address)
+                       GROUP BY fail_reason ORDER BY cnt DESC LIMIT 5"""
+                ).fetchall()
+            finally:
+                conn.close()
+
+            # Query data DB for trade-fetched count
+            # Use latest collection batch (all traders share the same updated_at)
+            # and fresh trade cache (within TTL) to avoid showing stale cumulative totals.
+            try:
+                data_conn = get_connection(self.app.data_db_path)
+                try:
+                    # Count traders from the most recent leaderboard pull only
+                    trader_count = data_conn.execute(
+                        """SELECT COUNT(*) FROM traders
+                           WHERE updated_at = (SELECT MAX(updated_at) FROM traders)"""
+                    ).fetchone()[0] or 0
+                    # Count traders with fresh trade data (within cache TTL)
+                    from snap.config import TRADE_CACHE_TTL_HOURS
+                    cache_cutoff = (
+                        datetime.now(timezone.utc) - timedelta(hours=TRADE_CACHE_TTL_HOURS)
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    fetched = data_conn.execute(
+                        "SELECT COUNT(DISTINCT address) FROM trade_history WHERE fetched_at >= ?",
+                        (cache_cutoff,),
+                    ).fetchone()[0] or 0
+                finally:
+                    data_conn.close()
+            except Exception:
+                fetched = 0
+                trader_count = 0
+
+            min_acct_str = f"${MIN_ACCOUNT_VALUE:,.0f}"
+            min_pnl_str = f"${MIN_PNL_30D:,.0f}"
+
+            lines = []
+            lines.append("[bold]Scoring Pipeline Funnel[/bold]")
+            lines.append(f"  Collected:         {trader_count:>5}          [dim]Union of 7d/30d/90d leaderboards — API filter: acct >= {min_acct_str}[/dim]")
+            lines.append(f"  Total scored:      {total:>5}          [dim]Scored from cache (latest run)[/dim]")
+            lines.append(f"  Trades fetched:    {fetched:>5}          [dim]Acct >= {min_acct_str} AND 30d PnL >= {min_pnl_str} — trade history pulled from API[/dim]")
+            t1_pct = f"({tier1*100//total}%)" if total > 0 else ""
+            lines.append(f"  Tier-1 pass:       {tier1:>5} {t1_pct:<5}    [dim]30d ROI + acct value above dynamic percentile cutoff[/dim]")
+            con_pct = f"({consistency*100//total}%)" if total > 0 else ""
+            lines.append(f"  Consistency pass:  {consistency:>5} {con_pct:<5}    [dim]Positive ROI across all three windows (7d, 30d, 90d)[/dim]")
+            q_pct = f"({quality*100//total}%)" if total > 0 else ""
+            lines.append(f"  Quality pass:      {quality:>5} {q_pct:<5}    [dim]Min trades, win rate 30–95%, profit factor above cohort cutoff[/dim]")
+            e_pct = f"({eligible*100//total}%)" if total > 0 else ""
+            lines.append(f"  [green]Eligible:          {eligible:>5} {e_pct:<5}    All gates passed, not HFT — ranked by composite score[/green]")
+            lines.append(f"  Last scored:       {last_scored[:16] if last_scored != 'never' else last_scored}")
+
+            if style_rows:
+                styles_str = ", ".join(f"{r['style'] or '?'}: {r['cnt']}" for r in style_rows)
+                lines.append(f"\n[bold]Style Distribution:[/bold] {styles_str}")
+
+            if top5:
+                lines.append("\n[bold]Top 5 Eligible:[/bold]")
+                for i, r in enumerate(top5, 1):
+                    addr = r["address"]
+                    short = f"{addr[:6]}..{addr[-4:]}" if len(addr) > 10 else addr
+                    lines.append(f"  {i}. {short}  score={r['composite_score']:.3f}  [{r['style'] or '?'}]")
+
+            if fail_rows:
+                lines.append("\n[bold]Top Fail Reasons:[/bold]")
+                for r in fail_rows:
+                    lines.append(f"  {r['fail_reason']}: {r['cnt']}")
+
+            widget.update("\n".join(lines))
+        except Exception as e:
+            widget.update(f"[red]Error loading trader summary: {e}[/red]")
+
+    def _load_rebalance_summary(self) -> None:
+        """Load latest rebalance details into the Rebalance tab."""
+        widget = self.query_one("#rebalance-summary", Static)
+        try:
+            conn = get_connection(self.app.db_path)
+            try:
+                # Latest rebalance_id
+                rebal_row = conn.execute(
+                    """SELECT rebalance_id, MAX(computed_at) as computed_at
+                       FROM target_allocations
+                       GROUP BY rebalance_id
+                       ORDER BY computed_at DESC LIMIT 1"""
+                ).fetchone()
+
+                # Current positions
+                positions = conn.execute(
+                    """SELECT COUNT(*) as cnt,
+                              COALESCE(SUM(position_usd), 0) as total_exposure,
+                              COALESCE(SUM(unrealized_pnl), 0) as total_pnl,
+                              SUM(CASE WHEN side='Long' THEN position_usd ELSE 0 END) as long_usd,
+                              SUM(CASE WHEN side='Short' THEN position_usd ELSE 0 END) as short_usd
+                       FROM our_positions"""
+                ).fetchone()
+
+                # Closed positions from pnl_ledger
+                closed = conn.execute(
+                    """SELECT COUNT(*) as cnt,
+                              COALESCE(SUM(realized_pnl), 0) as total_pnl
+                       FROM pnl_ledger"""
+                ).fetchone()
+
+                exit_reasons = conn.execute(
+                    """SELECT exit_reason, COUNT(*) as cnt
+                       FROM pnl_ledger
+                       WHERE exit_reason IS NOT NULL
+                       GROUP BY exit_reason ORDER BY cnt DESC"""
+                ).fetchall()
+
+                # If we have a rebalance, get its details
+                allocs = []
+                orders = []
+                if rebal_row and rebal_row["rebalance_id"]:
+                    rid = rebal_row["rebalance_id"]
+                    allocs = conn.execute(
+                        """SELECT token_symbol, side, target_usd
+                           FROM target_allocations
+                           WHERE rebalance_id = ?
+                           ORDER BY target_usd DESC""",
+                        (rid,),
+                    ).fetchall()
+                    orders = conn.execute(
+                        """SELECT token_symbol, side, order_type, intended_usd,
+                                  filled_usd, slippage_bps, status
+                           FROM orders
+                           WHERE rebalance_id = ?
+                           ORDER BY created_at DESC""",
+                        (rid,),
+                    ).fetchall()
+            finally:
+                conn.close()
+
+            lines = []
+
+            # Current positions
+            pos_cnt = positions["cnt"] if positions else 0
+            total_exp = positions["total_exposure"] if positions else 0
+            total_pnl = positions["total_pnl"] if positions else 0
+            long_usd = positions["long_usd"] or 0 if positions else 0
+            short_usd = positions["short_usd"] or 0 if positions else 0
+            pnl_style = "green" if total_pnl >= 0 else "red"
+
+            lines.append("[bold]Current Positions[/bold]")
+            lines.append(
+                f"  Open: {pos_cnt}  │  Exposure: ${total_exp:,.0f}  │  "
+                f"PnL: [{pnl_style}]{total_pnl:+,.0f}[/{pnl_style}]  │  "
+                f"Long: ${long_usd:,.0f}  Short: ${short_usd:,.0f}"
+            )
+
+            # Closed positions
+            closed_cnt = closed["cnt"] if closed else 0
+            closed_pnl = closed["total_pnl"] if closed else 0
+            cpnl_style = "green" if closed_pnl >= 0 else "red"
+            exits_str = ", ".join(f"{r['exit_reason']}: {r['cnt']}" for r in exit_reasons) if exit_reasons else "none"
+            lines.append(
+                f"  Closed: {closed_cnt}  │  Realized PnL: [{cpnl_style}]{closed_pnl:+,.0f}[/{cpnl_style}]  │  Exits: {exits_str}"
+            )
+
+            # Latest rebalance
+            if rebal_row and rebal_row["rebalance_id"]:
+                rid = rebal_row["rebalance_id"]
+                ts = rebal_row["computed_at"] or "?"
+                lines.append(f"\n[bold]Latest Rebalance[/bold]  {rid[:8]}..  at {ts[:16]}")
+
+                if allocs:
+                    alloc_parts = [f"{a['token_symbol']} {a['side']} ${a['target_usd']:,.0f}" for a in allocs[:6]]
+                    lines.append(f"  Targets: {' │ '.join(alloc_parts)}")
+
+                if orders:
+                    lines.append(f"  Orders ({len(orders)}):")
+                    for o in orders[:5]:
+                        slip = f"  slip {o['slippage_bps']:+.1f}bp" if o["slippage_bps"] else ""
+                        filled = f"${o['filled_usd']:,.0f}" if o["filled_usd"] else "—"
+                        lines.append(
+                            f"    {o['token_symbol']:8s} {o['side']:5s} {o['order_type']:6s}  "
+                            f"${o['intended_usd'] or 0:,.0f} → {filled}  [{o['status']}]{slip}"
+                        )
+            else:
+                lines.append("\n[dim]No rebalance history yet — press 'b' to rebalance[/dim]")
+
+            widget.update("\n".join(lines))
+        except Exception as e:
+            widget.update(f"[red]Error loading rebalance summary: {e}[/red]")
 
     def _update_status(self, state: str = "IDLE") -> None:
         """Update the status bar text with live countdowns."""
@@ -1451,21 +1726,27 @@ class DashboardScreen(Screen):
             if new_state != self._current_state:
                 old = self._current_state
                 self._current_state = new_state
-                if new_state == "REBALANCING":
-                    logger.info("Rebalance cycle started (auto-scheduled)")
-                    self.notify("Rebalancing in progress...", title="Rebalance", severity="information")
-                elif new_state == "IDLE" and old == "REBALANCING":
-                    logger.info("Rebalance cycle finished")
-                    self._last_rebalance_time = datetime.now(timezone.utc)
-                    self._load_portfolio()
-                    self._load_scores()
-                elif new_state == "IDLE" and old == "REFRESHING_TRADERS":
+                # Clear fresh_start whenever we leave REFRESHING_TRADERS,
+                # regardless of what state we transition to (the normal flow
+                # goes REFRESHING_TRADERS → REBALANCING, not directly to IDLE).
+                if old in ("REFRESHING_TRADERS", "REFRESHING"):
                     self._refresh_progress = None
                     self._fresh_start = False
                     self._last_refresh_time = datetime.now(timezone.utc)
                     self._last_data_check = None
                     self._refresh_data_freshness()
                     self._load_scores()
+                    self._load_traders_summary()
+                if new_state == "REBALANCING":
+                    logger.info("Rebalance cycle started (auto-scheduled)")
+                    self.notify("Rebalancing in progress...", title="Rebalance", severity="information")
+                elif new_state == "IDLE" and old == "REBALANCING":
+                    logger.info("Rebalance cycle finished")
+                    self._last_rebalance_time = datetime.now(timezone.utc)
+                    self._fresh_start = False  # safety net
+                    self._load_portfolio()
+                    self._load_scores()
+                    self._load_rebalance_summary()
         self._update_status(self._current_state)
 
     # -- Scheduler integration -----------------------------------------------
@@ -1503,6 +1784,40 @@ class DashboardScreen(Screen):
         client = PaperTradeClient(mark_prices={}, live_prices=True)
         nansen_client = NansenClient(api_key=NANSEN_API_KEY)
 
+        if self.ob_config.start_stage == "score_cache":
+            # Score from cached data, then start scheduler from rebalance
+            logger.info("Scoring from cached data (no API calls)")
+            self._update_status("REFRESHING")
+            try:
+                from snap.scoring import score_from_cache
+
+                if self.ob_config.variant_key == "CUSTOM":
+                    overrides = self.ob_config.custom_overrides
+                else:
+                    overrides = VARIANTS.get(self.ob_config.variant_key)
+                eligible = score_from_cache(
+                    data_db_path,
+                    overrides=overrides,
+                    strategy_db_path=db_path,
+                )
+                logger.info("Score from cache complete: %d eligible traders", len(eligible))
+                self.notify(
+                    f"Scored from cache: {len(eligible)} eligible — starting rebalance",
+                    title="Score Complete",
+                    severity="information",
+                )
+                self._load_scores()
+                self._load_traders_summary()
+            except Exception as e:
+                logger.exception("Score from cache failed")
+                self.notify(f"Score from cache failed: {e}", title="Error", severity="error")
+                await nansen_client.close()
+                self._update_status("IDLE")
+                return
+            # Fall through to start scheduler from rebalance stage
+            self.ob_config.start_stage = "rebalance"
+            self._update_status("IDLE")
+
         if self.ob_config.start_stage == "collect":
             # Collection-only mode: fetch data, don't start scheduler
             logger.info("Running data collection only (no trading)")
@@ -1530,6 +1845,8 @@ class DashboardScreen(Screen):
             # Refresh the display with collected data
             self._load_scores()
             self._load_portfolio()
+            self._load_traders_summary()
+            self._load_rebalance_summary()
             return  # Don't start the scheduler loop
 
         if self.ob_config.variant_key == "CUSTOM":
@@ -1563,6 +1880,7 @@ class DashboardScreen(Screen):
         elif self.ob_config.start_stage == "rebalance":
             # Pretend trader refresh just happened so scheduler skips it
             scheduler._last_trader_refresh = now
+            self._last_refresh_time = now  # sync TUI countdown display
             set_system_state(
                 db_path,
                 "last_trader_refresh_at",
@@ -1573,6 +1891,8 @@ class DashboardScreen(Screen):
             # Pretend both refresh and rebalance just happened
             scheduler._last_trader_refresh = now
             scheduler._last_rebalance = now
+            self._last_refresh_time = now  # sync TUI countdown display
+            self._last_rebalance_time = now
             set_system_state(
                 db_path,
                 "last_trader_refresh_at",
@@ -1617,6 +1937,7 @@ class DashboardScreen(Screen):
             self._update_status("IDLE")
             self._load_scores()
             self._load_portfolio()
+            self._load_traders_summary()
             self.notify("Trader refresh complete", title="Refresh", severity="information")
 
     def action_score_cache(self) -> None:
@@ -1642,6 +1963,7 @@ class DashboardScreen(Screen):
             self._update_status("IDLE")
             self._load_scores()
             self._load_portfolio()
+            self._load_traders_summary()
             self.notify(
                 f"Scored from cache: {len(eligible)} eligible",
                 title="Score from Cache",
@@ -1664,8 +1986,10 @@ class DashboardScreen(Screen):
             await self.scheduler._run_rebalance()
             self._last_rebalance_time = datetime.now(timezone.utc)
             self._last_data_check = None  # Force data freshness update
+            self._fresh_start = False
             self._update_status("IDLE")
             self._load_portfolio()
+            self._load_rebalance_summary()
             self.notify("Rebalance cycle complete", title="Rebalance", severity="information")
 
     def action_monitor(self) -> None:
@@ -1685,6 +2009,7 @@ class DashboardScreen(Screen):
         self._load_scores()
 
     def action_show_portfolio(self) -> None:
+        self._fresh_start = False  # user explicitly requested portfolio
         self._load_portfolio()
 
     def action_switch_variant(self) -> None:
@@ -1724,6 +2049,7 @@ class DashboardScreen(Screen):
             label = VARIANT_LABELS.get(variant_key, "?")
             self._update_status(self._current_state)
             self._load_scores()
+            self._load_traders_summary()
             self.notify(
                 f"Switched to {variant_key} ({label}) — {len(eligible)} eligible",
                 title="Variant Changed",

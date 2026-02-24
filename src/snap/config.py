@@ -68,8 +68,12 @@ TREND_TRADER_MAX_WR: float = 0.40
 
 TOP_N_TRADERS: int = 15
 
-# Trade cache TTL (hours) — skip API fetch if cached data is fresher
+# Trade cache TTL (hours) — full 90d re-fetch if cached data is older
 TRADE_CACHE_TTL_HOURS: int = 48
+
+# Incremental cache TTL (hours) — skip entirely if fetched more recently,
+# otherwise do a narrow incremental fetch to pick up new trades.
+TRADE_INCREMENTAL_TTL_HOURS: int = 6
 
 # ===========================================================================
 # Scoring Weights

@@ -1429,12 +1429,11 @@ def score_from_cache(
 
 
 # Per-timeframe leaderboard config: (days, min_total_pnl).
-# min_total_pnl is 0 for all timeframes so percentile computation sees the
-# full population.
+# 30d/90d thresholds tighten initial screening from ~3000 to ~1500 traders.
 _LEADERBOARD_RANGES: dict[str, tuple[int, float]] = {
     "7d": (7, 0),
-    "30d": (30, 0),
-    "90d": (90, 0),
+    "30d": (30, 10_000),
+    "90d": (90, 50_000),
 }
 
 
@@ -1651,10 +1650,44 @@ async def refresh_trader_universe(
     if not force_collect and _data_is_fresh(db_path):
         logger.info("Data is fresh, skipping API collection (use force_collect to override)")
     else:
+        # Auto-detect stale trade cache: if most recent fetched_at in
+        # trade_history is older than 2x TTL, force a full refetch to
+        # avoid silently reusing expired data.
+        force_refetch = False
+        try:
+            conn = get_connection(db_path)
+            try:
+                row = conn.execute(
+                    "SELECT MAX(fetched_at) AS latest FROM trade_history"
+                ).fetchone()
+            finally:
+                conn.close()
+            if row and row["latest"]:
+                latest_dt = datetime.strptime(
+                    row["latest"], "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc)
+                age_hours = (
+                    datetime.now(timezone.utc) - latest_dt
+                ).total_seconds() / 3600
+                if age_hours > 2 * TRADE_CACHE_TTL_HOURS:
+                    force_refetch = True
+                    logger.info(
+                        "Trade cache is very stale (%.1fh old, threshold=%dh) "
+                        "— forcing full refetch",
+                        age_hours,
+                        2 * TRADE_CACHE_TTL_HOURS,
+                    )
+        except Exception:
+            logger.debug("Could not check trade cache age", exc_info=True)
+
         try:
             from snap.collector import collect_trader_data  # type: ignore[import-not-found]
             logger.info("Using collector module for data collection")
-            await collect_trader_data(client, db_path, on_progress=on_progress)
+            await collect_trader_data(
+                client, db_path,
+                on_progress=on_progress,
+                force_refetch=force_refetch,
+            )
         except ImportError:
             logger.info("collector module not available, using legacy fetch path")
             await _legacy_collect(client, db_path, percentile=_percentile_val)

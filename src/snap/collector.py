@@ -19,17 +19,23 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from snap.config import MIN_ACCOUNT_VALUE, MIN_PNL_30D, TRADE_CACHE_TTL_HOURS
+from snap.config import (
+    MIN_ACCOUNT_VALUE,
+    MIN_PNL_30D,
+    TRADE_CACHE_TTL_HOURS,
+    TRADE_INCREMENTAL_TTL_HOURS,
+)
 from snap.database import get_connection
 from snap.ingestion import ingest_positions
 
 logger = logging.getLogger(__name__)
 
 # Per-timeframe leaderboard config: (days, min_total_pnl).
+# 30d/90d thresholds tighten initial screening from ~3000 to ~1500 traders.
 _LEADERBOARD_RANGES: dict[str, tuple[int, float]] = {
     "7d": (7, 0),
-    "30d": (30, 0),
-    "90d": (90, 0),
+    "30d": (30, 10_000),
+    "90d": (90, 50_000),
 }
 
 
@@ -38,8 +44,9 @@ class CollectionSummary:
     """Summary of a data collection run."""
 
     traders_fetched: int
-    trades_cached: int  # reused from cache
-    trades_fetched: int  # fetched from API
+    trades_cached: int  # reused from cache (skip entirely)
+    trades_incremental: int  # incremental fetch (recent trades only)
+    trades_fetched: int  # full 90d fetch from API
     positions_fetched: int
     errors: int
     duration_seconds: float
@@ -164,6 +171,29 @@ def _get_cached_trades(
         conn.close()
 
 
+def _get_cache_age_hours(db_path: str, address: str) -> tuple[float | None, str | None]:
+    """Return (age_in_hours, fetched_at_str) for the most recent fetch of *address*.
+
+    Returns ``(None, None)`` if no cached data exists.
+    """
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT MAX(fetched_at) AS latest FROM trade_history WHERE address = ?",
+            (address,),
+        ).fetchone()
+        if not row or not row["latest"]:
+            return None, None
+        latest_str = row["latest"]
+        latest_dt = datetime.strptime(latest_str, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+        age_hours = (datetime.now(timezone.utc) - latest_dt).total_seconds() / 3600
+        return age_hours, latest_str
+    finally:
+        conn.close()
+
+
 def _cache_trades(db_path: str, address: str, trades: list[dict]) -> None:
     """Store fetched trades into the ``trade_history`` table."""
     if not trades:
@@ -242,6 +272,7 @@ async def collect_trader_data(
     db_path: str,
     min_account_value: float = MIN_ACCOUNT_VALUE,
     on_progress: "Callable[[int, int], None] | None" = None,
+    force_refetch: bool = False,
 ) -> CollectionSummary:
     """Fetch all trader data from Nansen and cache in SQLite.
 
@@ -264,6 +295,9 @@ async def collect_trader_data(
     on_progress:
         Optional callback ``(current, total)`` invoked after each trader
         is processed in Phase 2.  Used by the TUI to show progress.
+    force_refetch:
+        When ``True``, bypass the trade cache entirely and always fetch
+        from the API.  Useful when cached data is suspected to be stale.
 
     Returns
     -------
@@ -273,6 +307,7 @@ async def collect_trader_data(
     start = time.monotonic()
     errors = 0
     trades_cached = 0
+    trades_incremental = 0
     trades_fetched = 0
 
     # ------------------------------------------------------------------
@@ -286,6 +321,11 @@ async def collect_trader_data(
 
     # ------------------------------------------------------------------
     # Phase 2: Fetch trades for all qualifying traders
+    #
+    # Three-tier cache strategy:
+    #   1. Fetched within INCREMENTAL TTL  → skip entirely (truly fresh)
+    #   2. Fetched within FULL TTL         → incremental fetch (narrow window)
+    #   3. No cache or beyond FULL TTL     → full 90d fetch
     # ------------------------------------------------------------------
     logger.info("Phase 2: Fetching trade history...")
     today = datetime.now(timezone.utc).date()
@@ -298,31 +338,63 @@ async def collect_trader_data(
         if t.get("account_value", 0) >= min_account_value
         and (t.get("pnl_30d") or 0) >= MIN_PNL_30D
     ]
+
     logger.info(
-        "Phase 2: %d traders qualify (account_value >= %.0f, pnl_30d >= %.0f)",
+        "Phase 2: %d qualifying, skip_ttl=%dh, incremental_ttl=%dh, full_ttl=%dh, force_refetch=%s",
         len(qualifying),
-        min_account_value,
-        MIN_PNL_30D,
+        TRADE_INCREMENTAL_TTL_HOURS,
+        TRADE_CACHE_TTL_HOURS,
+        TRADE_CACHE_TTL_HOURS,
+        force_refetch,
     )
 
     total_qualifying = len(qualifying)
     for i, addr in enumerate(qualifying, 1):
-        cached = _get_cached_trades(db_path, addr, TRADE_CACHE_TTL_HOURS)
-        if cached is not None:
-            trades_cached += 1
-            if on_progress:
-                on_progress(i, total_qualifying)
-            if i % 100 == 0 or i == total_qualifying:
-                logger.info(
-                    "Phase 2 progress: %d/%d (cached=%d, fetched=%d, errors=%d)",
-                    i,
-                    total_qualifying,
-                    trades_cached,
-                    trades_fetched,
-                    errors,
-                )
-            continue
+        if not force_refetch:
+            cache_age, fetched_at_str = _get_cache_age_hours(db_path, addr)
 
+            if cache_age is not None and cache_age <= TRADE_INCREMENTAL_TTL_HOURS:
+                # Tier 1: truly fresh — skip entirely
+                trades_cached += 1
+                if i <= 5:
+                    logger.info("  Fresh cache for %s (%.1fh old, skipping)", addr[:10], cache_age)
+                if on_progress:
+                    on_progress(i, total_qualifying)
+                if i % 100 == 0 or i == total_qualifying:
+                    logger.info(
+                        "Phase 2 progress: %d/%d (cached=%d, incremental=%d, fetched=%d, errors=%d)",
+                        i, total_qualifying, trades_cached, trades_incremental, trades_fetched, errors,
+                    )
+                continue
+
+            if cache_age is not None and cache_age <= TRADE_CACHE_TTL_HOURS:
+                # Tier 2: moderately fresh — incremental fetch for recent trades
+                # Use fetched_at date minus 1 day as the start to catch edge cases
+                fetch_dt = datetime.strptime(fetched_at_str, "%Y-%m-%dT%H:%M:%SZ")  # type: ignore[arg-type]
+                incr_from = (fetch_dt.date() - timedelta(days=1)).isoformat()
+                try:
+                    new_trades = await client.get_perp_trades(
+                        address=addr,
+                        date_from=incr_from,
+                        date_to=date_to,
+                    )
+                    _cache_trades(db_path, addr, new_trades)
+                    trades_incremental += 1
+                except Exception:
+                    logger.warning(
+                        "Failed incremental fetch for address=%s, skipping", addr, exc_info=True,
+                    )
+                    errors += 1
+                if on_progress:
+                    on_progress(i, total_qualifying)
+                if i % 50 == 0 or i == total_qualifying:
+                    logger.info(
+                        "Phase 2 progress: %d/%d (cached=%d, incremental=%d, fetched=%d, errors=%d)",
+                        i, total_qualifying, trades_cached, trades_incremental, trades_fetched, errors,
+                    )
+                continue
+
+        # Tier 3: no cache or very stale — full 90d fetch
         try:
             trades = await client.get_perp_trades(
                 address=addr,
@@ -343,17 +415,15 @@ async def collect_trader_data(
             on_progress(i, total_qualifying)
         if i % 50 == 0 or i == total_qualifying:
             logger.info(
-                "Phase 2 progress: %d/%d (cached=%d, fetched=%d, errors=%d)",
-                i,
-                total_qualifying,
-                trades_cached,
-                trades_fetched,
-                errors,
+                "Phase 2 progress: %d/%d (cached=%d, incremental=%d, fetched=%d, errors=%d)",
+                i, total_qualifying, trades_cached, trades_incremental, trades_fetched, errors,
             )
 
     logger.info(
-        "Phase 2 complete: cached=%d, fetched=%d, errors=%d",
+        "Phase 2 complete: %d qualifying — cached=%d, incremental=%d, fetched=%d, errors=%d",
+        total_qualifying,
         trades_cached,
+        trades_incremental,
         trades_fetched,
         errors,
     )
@@ -379,6 +449,7 @@ async def collect_trader_data(
     summary = CollectionSummary(
         traders_fetched=len(merged),
         trades_cached=trades_cached,
+        trades_incremental=trades_incremental,
         trades_fetched=trades_fetched,
         positions_fetched=positions_fetched,
         errors=errors,
