@@ -132,6 +132,13 @@ Auto-refresh: every 1 hour.`}
           </div>
         )}
 
+        {/* Radar chart — above table on mobile, sidebar on desktop */}
+        {scoreBreakdown && (
+          <div className="lg:hidden">
+            <ScoreRadarChart scoreBreakdown={scoreBreakdown} />
+          </div>
+        )}
+
         {/* Content */}
         <div className="flex gap-4">
           <div className="flex-1 min-w-0">
@@ -152,7 +159,7 @@ Auto-refresh: every 1 hour.`}
             )}
           </div>
 
-          {/* Radar chart sidebar */}
+          {/* Radar chart sidebar — desktop only */}
           {scoreBreakdown && (
             <div className="hidden w-72 shrink-0 lg:block">
               <ScoreRadarChart scoreBreakdown={scoreBreakdown} />
