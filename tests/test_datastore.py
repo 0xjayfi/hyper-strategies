@@ -319,6 +319,18 @@ class TestTradeMetrics:
         assert r30.window_days == 30
         assert r30.total_trades == 50
 
+    def test_insert_and_get_extended_metrics(self, ds: DataStore) -> None:
+        """Extended assessment fields should round-trip through insert/get."""
+        ds.upsert_trader("0xEXT")
+        m = make_metrics(max_leverage=15.0, leverage_std=3.5, largest_trade_pnl_ratio=0.28, pnl_trend_slope=0.04)
+        ds.insert_trade_metrics("0xEXT", m)
+        result = ds.get_latest_metrics("0xEXT", window_days=30)
+        assert result is not None
+        assert result.max_leverage == 15.0
+        assert result.leverage_std == 3.5
+        assert result.largest_trade_pnl_ratio == 0.28
+        assert result.pnl_trend_slope == 0.04
+
 
 # ===================================================================
 # Scores

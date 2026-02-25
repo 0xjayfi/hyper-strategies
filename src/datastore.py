@@ -96,7 +96,11 @@ class DataStore:
                 pseudo_sharpe   REAL,
                 total_pnl       REAL,
                 roi_proxy       REAL,
-                max_drawdown_proxy REAL
+                max_drawdown_proxy REAL,
+                max_leverage    REAL DEFAULT 0.0,
+                leverage_std    REAL DEFAULT 0.0,
+                largest_trade_pnl_ratio REAL DEFAULT 0.0,
+                pnl_trend_slope REAL DEFAULT 0.0
             );
 
             CREATE TABLE IF NOT EXISTS trader_scores (
@@ -282,8 +286,9 @@ class DataStore:
                 (address, computed_at, window_days, total_trades, winning_trades,
                  losing_trades, win_rate, gross_profit, gross_loss, profit_factor,
                  avg_return, std_return, pseudo_sharpe, total_pnl, roi_proxy,
-                 max_drawdown_proxy)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 max_drawdown_proxy, max_leverage, leverage_std,
+                 largest_trade_pnl_ratio, pnl_trend_slope)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 address,
@@ -302,6 +307,10 @@ class DataStore:
                 metrics.total_pnl,
                 metrics.roi_proxy,
                 metrics.max_drawdown_proxy,
+                metrics.max_leverage,
+                metrics.leverage_std,
+                metrics.largest_trade_pnl_ratio,
+                metrics.pnl_trend_slope,
             ),
         )
         self._conn.commit()
@@ -339,6 +348,10 @@ class DataStore:
             total_pnl=row["total_pnl"],
             roi_proxy=row["roi_proxy"],
             max_drawdown_proxy=row["max_drawdown_proxy"],
+            max_leverage=row["max_leverage"] or 0.0,
+            leverage_std=row["leverage_std"] or 0.0,
+            largest_trade_pnl_ratio=row["largest_trade_pnl_ratio"] or 0.0,
+            pnl_trend_slope=row["pnl_trend_slope"] or 0.0,
         )
 
     # ------------------------------------------------------------------
