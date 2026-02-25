@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from backend.cache import CacheLayer
 from backend.config import ALLOWED_ORIGINS, NANSEN_API_KEY, NANSEN_BASE_URL
-from backend.routers import allocations, health, leaderboard, market, positions, screener, traders
+from backend.routers import allocations, assess, health, leaderboard, market, positions, screener, traders
 from src.datastore import DataStore
 from src.nansen_client import NansenAPIError, NansenClient, NansenRateLimitError
 
@@ -67,6 +67,7 @@ app.include_router(leaderboard.router)
 app.include_router(screener.router)
 app.include_router(traders.router)
 app.include_router(allocations.router)
+app.include_router(assess.router)
 
 
 @app.exception_handler(NansenRateLimitError)
