@@ -217,6 +217,53 @@ CREATE TABLE IF NOT EXISTS system_state (
 );
 """
 
+_CREATE_ML_FEATURE_SNAPSHOTS = """
+CREATE TABLE IF NOT EXISTS ml_feature_snapshots (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    address                 TEXT    NOT NULL,
+    snapshot_date           TEXT    NOT NULL,
+    roi_7d                  REAL,
+    roi_30d                 REAL,
+    roi_90d                 REAL,
+    pnl_7d                  REAL,
+    pnl_30d                 REAL,
+    pnl_90d                 REAL,
+    win_rate                REAL,
+    profit_factor           REAL,
+    pseudo_sharpe           REAL,
+    trade_count             INTEGER,
+    avg_hold_hours          REAL,
+    trades_per_day          REAL,
+    consistency_score       REAL,
+    smart_money_bonus       REAL,
+    risk_mgmt_score         REAL,
+    position_concentration  REAL,
+    num_open_positions      INTEGER,
+    avg_leverage            REAL,
+    pnl_volatility_7d      REAL,
+    market_correlation      REAL,
+    days_since_last_trade   REAL,
+    max_drawdown_30d        REAL,
+    forward_pnl_7d          REAL,
+    created_at              TEXT    DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+"""
+
+_CREATE_ML_MODELS = """
+CREATE TABLE IF NOT EXISTS ml_models (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    version                 INTEGER NOT NULL,
+    trained_at              TEXT    NOT NULL,
+    train_rmse              REAL,
+    val_rmse                REAL,
+    test_rmse               REAL,
+    top15_backtest_pnl      REAL,
+    feature_importances     TEXT,
+    model_path              TEXT,
+    is_active               INTEGER DEFAULT 0
+);
+"""
+
 # ---------------------------------------------------------------------------
 # Grouped DDL: Data DB vs Strategy DB
 # ---------------------------------------------------------------------------
@@ -236,6 +283,8 @@ _STRATEGY_STATEMENTS: list[str] = [
     _CREATE_OUR_POSITIONS,
     _CREATE_PNL_LEDGER,
     _CREATE_SYSTEM_STATE,
+    _CREATE_ML_FEATURE_SNAPSHOTS,
+    _CREATE_ML_MODELS,
 ]
 
 # Ordered list of all DDL statements (single-DB compat)

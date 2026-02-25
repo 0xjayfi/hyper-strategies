@@ -27,6 +27,8 @@ EXPECTED_TABLES = {
     "our_positions",
     "pnl_ledger",
     "system_state",
+    "ml_feature_snapshots",
+    "ml_models",
 }
 
 EXPECTED_DATA_TABLES = {
@@ -42,6 +44,8 @@ EXPECTED_STRATEGY_TABLES = {
     "our_positions",
     "pnl_ledger",
     "system_state",
+    "ml_feature_snapshots",
+    "ml_models",
 }
 
 
