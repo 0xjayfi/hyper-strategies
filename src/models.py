@@ -237,7 +237,8 @@ class TradeMetrics(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     window_days: int
-    total_trades: int
+    total_fills: int = 0   # all order fills (activity level)
+    total_trades: int      # PnL-realizing trades only (for scoring)
     winning_trades: int
     losing_trades: int
     win_rate: float
@@ -258,13 +259,14 @@ class TradeMetrics(BaseModel):
     pnl_trend_slope: float = 0.0
 
     @classmethod
-    def empty(cls, window_days: int) -> TradeMetrics:
+    def empty(cls, window_days: int, total_fills: int = 0) -> TradeMetrics:
         """Return a TradeMetrics instance with all numeric fields zeroed out.
 
-        Useful when there are no trades in the given window.
+        Useful when there are no PnL-realizing trades in the given window.
         """
         return cls(
             window_days=window_days,
+            total_fills=total_fills,
             total_trades=0,
             winning_trades=0,
             losing_trades=0,

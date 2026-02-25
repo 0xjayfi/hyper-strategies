@@ -32,13 +32,15 @@ def compute_trade_metrics(trades: list[Trade], account_value: float, window_days
     Returns:
         TradeMetrics object with computed statistics
     """
-    # Filter to trades with realized PnL (any action type — Hyperliquid
-    # can attach closed_pnl to Open, Add, Reduce, or Close actions)
+    # Total fills = all order fills (activity level).
+    # PnL trades = only those with realized profit/loss (for scoring metrics).
+    # Hyperliquid can attach closed_pnl to any action type (Open, Add, etc.).
+    total_fills = len(trades)
     close_trades = [t for t in trades if t.closed_pnl != 0]
 
     total_trades = len(close_trades)
     if total_trades == 0:
-        return TradeMetrics.empty(window_days)
+        return TradeMetrics.empty(window_days, total_fills=total_fills)
 
     winning = [t for t in close_trades if t.closed_pnl > 0]
     losing = [t for t in close_trades if t.closed_pnl < 0]
@@ -96,6 +98,7 @@ def compute_trade_metrics(trades: list[Trade], account_value: float, window_days
 
     return TradeMetrics(
         window_days=window_days,
+        total_fills=total_fills,
         total_trades=total_trades,
         winning_trades=len(winning),
         losing_trades=len(losing),

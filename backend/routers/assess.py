@@ -71,8 +71,8 @@ async def assess_trader(
         except Exception:
             logger.warning("Could not fetch positions for %s during assessment", address)
 
-    # Live fetch from Nansen if no cached data — single page (100 trades)
-    # to keep response fast and avoid rate limits.
+    # Live fetch from Nansen if no cached data.
+    # Auto-paginates up to 1000 trades with 7s interval between pages.
     if metrics is None:
         date_to = now.strftime("%Y-%m-%d")
         date_from = (now - timedelta(days=window_days)).strftime("%Y-%m-%d")
@@ -82,7 +82,6 @@ async def assess_trader(
                 address=address,
                 date_from=date_from,
                 date_to=date_to,
-                pagination={"page": 1, "per_page": 100},
                 order_by=[{"field": "timestamp", "direction": "DESC"}],
             )
         except NansenRateLimitError:
@@ -117,7 +116,7 @@ async def assess_trader(
         address=address,
         is_cached=is_cached,
         window_days=window_days,
-        trade_count=metrics.total_trades,
+        trade_count=metrics.total_fills or metrics.total_trades,
         confidence=AssessmentConfidence(**result["confidence"]),
         strategies=[AssessmentStrategyResult(**s) for s in result["strategies"]],
         computed_at=now.isoformat(),

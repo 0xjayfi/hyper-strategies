@@ -84,6 +84,7 @@ class DataStore:
                 address         TEXT NOT NULL REFERENCES traders(address),
                 computed_at     TEXT NOT NULL,
                 window_days     INTEGER NOT NULL,
+                total_fills     INTEGER DEFAULT 0,
                 total_trades    INTEGER,
                 winning_trades  INTEGER,
                 losing_trades   INTEGER,
@@ -283,17 +284,19 @@ class DataStore:
         self._conn.execute(
             """
             INSERT INTO trade_metrics
-                (address, computed_at, window_days, total_trades, winning_trades,
+                (address, computed_at, window_days, total_fills, total_trades,
+                 winning_trades,
                  losing_trades, win_rate, gross_profit, gross_loss, profit_factor,
                  avg_return, std_return, pseudo_sharpe, total_pnl, roi_proxy,
                  max_drawdown_proxy, max_leverage, leverage_std,
                  largest_trade_pnl_ratio, pnl_trend_slope)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 address,
                 computed_at,
                 metrics.window_days,
+                metrics.total_fills,
                 metrics.total_trades,
                 metrics.winning_trades,
                 metrics.losing_trades,
@@ -335,6 +338,7 @@ class DataStore:
             return None
         return TradeMetrics(
             window_days=row["window_days"],
+            total_fills=row["total_fills"] or 0,
             total_trades=row["total_trades"],
             winning_trades=row["winning_trades"],
             losing_trades=row["losing_trades"],
