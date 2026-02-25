@@ -1,0 +1,32 @@
+{
+  "trained_at": "2026-02-25T07:56:24Z",
+  "train_rmse": 0.0840381786704886,
+  "val_rmse": 0.48412510671407605,
+  "test_rmse": 0.3045122535040925,
+  "top15_backtest_pnl": 0.14504464423804375,
+  "feature_importances": {
+    "roi_7d": 0.041759781539440155,
+    "roi_30d": 0.060607027262449265,
+    "roi_90d": 0.052264198660850525,
+    "pnl_7d": 0.034443777054548264,
+    "pnl_30d": 0.04585716500878334,
+    "pnl_90d": 0.06259036064147949,
+    "win_rate": 0.08211599290370941,
+    "profit_factor": 0.06698732078075409,
+    "pseudo_sharpe": 0.059983257204294205,
+    "trade_count": 0.06304066628217697,
+    "avg_hold_hours": 0.06353314220905304,
+    "trades_per_day": 0.06141991913318634,
+    "consistency_score": 0.04513316974043846,
+    "smart_money_bonus": 0.04063068702816963,
+    "risk_mgmt_score": 0.0,
+    "recency_decay": 0.06051625311374664,
+    "position_concentration": 0.0,
+    "num_open_positions": 0.0,
+    "avg_leverage": 0.0,
+    "pnl_volatility_7d": 0.06431371718645096,
+    "market_correlation": 0.0,
+    "days_since_last_trade": 0.035958655178546906,
+    "max_drawdown_30d": 0.058844853192567825
+  }
+}
