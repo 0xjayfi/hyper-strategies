@@ -429,3 +429,44 @@ class StrategiesResponse(BaseModel):
     index_portfolio: list[IndexPortfolioEntry]
     consensus: dict[str, ConsensusToken]
     sizing_params: list[SizingEntry]
+
+
+# ---------------------------------------------------------------------------
+# Assessment models
+# ---------------------------------------------------------------------------
+
+
+class AssessmentStrategyResult(BaseModel):
+    """Result from a single assessment strategy."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    category: str
+    score: int
+    passed: bool
+    explanation: str
+
+
+class AssessmentConfidence(BaseModel):
+    """Overall confidence from the assessment."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    passed: int
+    total: int
+    tier: str
+
+
+class AssessmentResponse(BaseModel):
+    """Response envelope for the trader assessment endpoint."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: str
+    is_cached: bool
+    window_days: int
+    trade_count: int
+    confidence: AssessmentConfidence
+    strategies: list[AssessmentStrategyResult]
+    computed_at: str
