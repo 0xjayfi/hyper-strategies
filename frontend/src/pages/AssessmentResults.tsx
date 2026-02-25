@@ -7,6 +7,8 @@ import { ErrorState } from '../components/shared/ErrorState';
 import { useAssessment } from '../api/hooks';
 import type { AssessmentStrategyResult } from '../api/types';
 import { cn } from '../lib/utils';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { ScorecardCardList } from '../components/shared/ScorecardCard';
 
 const TIER_COLORS: Record<string, string> = {
   Elite: 'bg-green/20 text-green border-green/30',
@@ -38,7 +40,7 @@ function RadarSection({ strategies }: { strategies: AssessmentStrategyResult[] }
   return (
     <div className="rounded-lg border border-border bg-card p-6">
       <h2 className="mb-4 text-sm font-medium text-text-primary">Score Radar</h2>
-      <ResponsiveContainer width="100%" height={400}>
+      <ResponsiveContainer width="100%" height={300}>
         <RadarChart data={data}>
           <PolarGrid stroke="#30363d" />
           <PolarAngleAxis dataKey="strategy" tick={{ fill: '#8b949e', fontSize: 11 }} />
@@ -117,6 +119,7 @@ function ScorecardTable({ strategies }: { strategies: AssessmentStrategyResult[]
 export function AssessmentResults() {
   const { address } = useParams<{ address: string }>();
   const { data, isLoading, isError, error, refetch } = useAssessment(address || '');
+  const isMobile = useIsMobile();
 
   if (isLoading) {
     return (
@@ -152,7 +155,7 @@ export function AssessmentResults() {
           </Link>
 
           <div className="flex items-center gap-3">
-            <h1 className="font-mono text-lg text-text-primary">{truncateAddress(data.address)}</h1>
+            <h1 className="font-mono text-base md:text-lg text-text-primary">{truncateAddress(data.address)}</h1>
             <span className={cn('rounded-md border px-2.5 py-1 text-xs font-semibold', tierClass)}>
               {data.confidence.tier}
             </span>
@@ -181,8 +184,12 @@ export function AssessmentResults() {
         {/* Radar Chart */}
         <RadarSection strategies={data.strategies} />
 
-        {/* Scorecard Table */}
-        <ScorecardTable strategies={data.strategies} />
+        {/* Scorecard */}
+        {isMobile ? (
+          <ScorecardCardList strategies={data.strategies} />
+        ) : (
+          <ScorecardTable strategies={data.strategies} />
+        )}
       </div>
     </PageLayout>
   );
