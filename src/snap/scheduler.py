@@ -59,6 +59,7 @@ class SchedulerState(enum.Enum):
     INGESTING_TRADES = "INGESTING_TRADES"
     MONITORING = "MONITORING"
     SHUTTING_DOWN = "SHUTTING_DOWN"
+    SNAPSHOTTING_ML = "SNAPSHOTTING_ML"
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +145,7 @@ class SystemScheduler:
         self._last_rebalance: datetime | None = None
         self._last_trade_ingestion: datetime | None = None
         self._last_monitor: datetime | None = None
+        self._last_ml_snapshot: float = 0.0
 
     def set_scoring_overrides(self, overrides: dict | None) -> None:
         """Update scoring variant overrides (for live variant switching)."""
@@ -399,6 +401,35 @@ class SystemScheduler:
         elapsed = (now - self._last_monitor).total_seconds()
         return elapsed >= MONITOR_INTERVAL_SECONDS
 
+    def _should_snapshot_ml(self, now: datetime) -> bool:
+        """Check if we should run ML feature snapshot."""
+        from snap.config import ML_SNAPSHOT_HOUR_UTC
+        import time as _time
+        elapsed = _time.time() - self._last_ml_snapshot
+        return elapsed >= 86400 and now.hour == ML_SNAPSHOT_HOUR_UTC
+
+    # -- Job: ML Feature Snapshot (daily) ----------------------------------
+
+    async def _run_ml_snapshot(self) -> None:
+        """Run daily ML feature snapshot and forward PnL backfill."""
+        self._set_state(SchedulerState.SNAPSHOTTING_ML)
+        try:
+            from snap.ml.daily_snapshot import snapshot_trader_features, backfill_forward_pnl
+            from snap.database import get_connection
+            import time as _time
+            conn = get_connection(self.db_path)
+            from datetime import datetime as _dt, timezone as _tz
+            now = _dt.now(_tz.utc)
+            count = snapshot_trader_features(conn, now)
+            filled = backfill_forward_pnl(conn, now)
+            logger.info("ML snapshot: %d features captured, %d forward PnL backfilled", count, filled)
+            conn.close()
+            self._last_ml_snapshot = _time.time()
+        except Exception as e:
+            logger.warning("ML snapshot failed: %s", e)
+        finally:
+            self._set_state(SchedulerState.IDLE)
+
     # -- Main loop ---------------------------------------------------------
 
     async def run(
@@ -438,6 +469,8 @@ class SystemScheduler:
                     await self._run_trade_ingestion()
                 elif self._should_monitor(now):
                     await self._run_monitor()
+                elif self._should_snapshot_ml(now):
+                    await self._run_ml_snapshot()
 
             tick += 1
             if max_ticks is not None and tick >= max_ticks:
