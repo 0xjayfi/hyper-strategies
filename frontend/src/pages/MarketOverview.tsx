@@ -57,7 +57,7 @@ Auto-refresh: every 5 minutes.`}
       onRefresh={() => refetch()}
       isRefreshing={isFetching}
     >
-      <div className="space-y-6">
+      <div className="space-y-4 md:space-y-6">
         {isLoading ? (
           <LoadingState message="Loading market data..." />
         ) : isError ? (
@@ -70,7 +70,7 @@ Auto-refresh: every 5 minutes.`}
         ) : (
           <>
             {/* Token Cards Grid */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
               {data.tokens.map((token) => (
                 <TokenCard key={token.symbol} token={token} />
               ))}

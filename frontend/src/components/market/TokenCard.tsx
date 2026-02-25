@@ -13,7 +13,7 @@ export function TokenCard({ token }: TokenCardProps) {
   const fundingPositive = token.funding_rate >= 0;
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+    <div className="rounded-lg border border-border bg-card p-3 md:p-4 space-y-3">
       {/* Header */}
       <div className="flex items-center justify-between">
         <TokenBadge token={token.symbol} className="text-sm" />
