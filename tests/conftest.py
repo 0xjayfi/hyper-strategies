@@ -18,6 +18,7 @@ def make_metrics(window_days=30, **overrides):
         win_rate=0.6, gross_profit=15000.0, gross_loss=5000.0, profit_factor=3.0,
         avg_return=0.05, std_return=0.03, pseudo_sharpe=1.67,
         total_pnl=10000.0, roi_proxy=20.0, max_drawdown_proxy=0.05,
+        max_leverage=0.0, leverage_std=0.0, largest_trade_pnl_ratio=0.0, pnl_trend_slope=0.0,
     )
     defaults.update(overrides)
     return TradeMetrics(**defaults)

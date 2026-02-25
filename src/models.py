@@ -251,6 +251,12 @@ class TradeMetrics(BaseModel):
     roi_proxy: float
     max_drawdown_proxy: float
 
+    # Extended fields for assessment strategies
+    max_leverage: float = 0.0
+    leverage_std: float = 0.0
+    largest_trade_pnl_ratio: float = 0.0
+    pnl_trend_slope: float = 0.0
+
     @classmethod
     def empty(cls, window_days: int) -> TradeMetrics:
         """Return a TradeMetrics instance with all numeric fields zeroed out.

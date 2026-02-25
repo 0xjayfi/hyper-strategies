@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from tests.conftest import make_trade
+from tests.conftest import make_trade, make_metrics
 from src.metrics import compute_trade_metrics
 
 def test_win_rate_basic():
@@ -49,3 +49,18 @@ def test_zero_account_value():
     m = compute_trade_metrics(trades, account_value=0, window_days=7)
     assert m.roi_proxy == 0.0
     assert m.max_drawdown_proxy == 0.0
+
+def test_trade_metrics_has_extended_fields():
+    m = make_metrics(max_leverage=25.0, leverage_std=5.0, largest_trade_pnl_ratio=0.35, pnl_trend_slope=0.02)
+    assert m.max_leverage == 25.0
+    assert m.leverage_std == 5.0
+    assert m.largest_trade_pnl_ratio == 0.35
+    assert m.pnl_trend_slope == 0.02
+
+def test_trade_metrics_empty_has_extended_fields():
+    from src.models import TradeMetrics
+    m = TradeMetrics.empty(30)
+    assert m.max_leverage == 0.0
+    assert m.leverage_std == 0.0
+    assert m.largest_trade_pnl_ratio == 0.0
+    assert m.pnl_trend_slope == 0.0
