@@ -14,6 +14,7 @@ export function useKeyboardShortcuts() {
         case '2': navigate('/positions'); break;
         case '3': navigate('/leaderboard'); break;
         case '4': navigate('/allocations'); break;
+        case '5': navigate('/assess'); break;
         case 'r':
           if (!e.ctrlKey && !e.metaKey) {
             window.dispatchEvent(new CustomEvent('hyper-refresh'));

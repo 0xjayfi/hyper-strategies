@@ -9,6 +9,8 @@ const PositionExplorer = lazy(() => import('./pages/PositionExplorer').then(m =>
 const TraderLeaderboard = lazy(() => import('./pages/TraderLeaderboard').then(m => ({ default: m.TraderLeaderboard })));
 const TraderDeepDive = lazy(() => import('./pages/TraderDeepDive').then(m => ({ default: m.TraderDeepDive })));
 const AllocationDashboard = lazy(() => import('./pages/AllocationDashboard').then(m => ({ default: m.AllocationDashboard })));
+const AssessTrader = lazy(() => import('./pages/AssessTrader').then(m => ({ default: m.AssessTrader })));
+const AssessmentResults = lazy(() => import('./pages/AssessmentResults').then(m => ({ default: m.AssessmentResults })));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,6 +33,8 @@ function AppRoutes() {
         <Route path="/leaderboard" element={<TraderLeaderboard />} />
         <Route path="/traders/:address" element={<TraderDeepDive />} />
         <Route path="/allocations" element={<AllocationDashboard />} />
+        <Route path="/assess" element={<AssessTrader />} />
+        <Route path="/assess/:address" element={<AssessmentResults />} />
       </Routes>
     </Suspense>
   );

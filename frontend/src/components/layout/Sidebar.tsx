@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink } from 'react-router';
-import { BarChart3, Table, Trophy, PieChart, PanelLeftClose, PanelLeft } from 'lucide-react';
+import { BarChart3, Table, Trophy, PieChart, PanelLeftClose, PanelLeft, ClipboardCheck } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useHealthCheck } from '../../api/hooks';
 
@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { to: '/positions', label: 'Position Explorer', icon: Table, shortcut: '2' },
   { to: '/leaderboard', label: 'Leaderboard', icon: Trophy, shortcut: '3' },
   { to: '/allocations', label: 'Allocations', icon: PieChart, shortcut: '4' },
+  { to: '/assess', label: 'Assess Trader', icon: ClipboardCheck, shortcut: '5' },
 ] as const;
 
 export function Sidebar() {
