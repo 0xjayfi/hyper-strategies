@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { NavLink } from 'react-router';
 import { BarChart3, Table, Trophy, PieChart, ClipboardCheck, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -19,12 +20,21 @@ interface MobileNavProps {
 export function MobileNav({ open, onClose }: MobileNavProps) {
   const { isSuccess, isError } = useHealthCheck();
 
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 md:hidden">
+    <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-label="Navigation menu">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
 
       {/* Slide-out panel */}
       <aside className="absolute left-0 top-0 flex h-full w-[280px] flex-col bg-card border-r border-border">
@@ -36,7 +46,8 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
           </div>
           <button
             onClick={onClose}
-            className="rounded-md p-1.5 text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
+            aria-label="Close navigation"
+            className="rounded-md p-2.5 text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
           >
             <X className="h-5 w-5" />
           </button>

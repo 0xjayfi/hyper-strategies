@@ -101,11 +101,6 @@ interface TradeHistoryTableProps {
 
 export function TradeHistoryTable({ data }: TradeHistoryTableProps) {
   const isMobile = useIsMobile();
-
-  if (isMobile) {
-    return <TradeHistoryCardList data={data} />;
-  }
-
   const [sorting, setSorting] = useState<SortingState>([{ id: 'timestamp', desc: true }]);
 
   const table = useReactTable({
@@ -118,6 +113,10 @@ export function TradeHistoryTable({ data }: TradeHistoryTableProps) {
     getPaginationRowModel: getPaginationRowModel(),
     initialState: { pagination: { pageSize: 50 } },
   });
+
+  if (isMobile) {
+    return <TradeHistoryCardList data={data} />;
+  }
 
   return (
     <div className="rounded-lg border border-border">

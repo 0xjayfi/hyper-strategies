@@ -41,7 +41,8 @@ export function Header({ title, lastUpdated, onRefresh, isRefreshing, onMenuTogg
           {onMenuToggle && (
             <button
               onClick={onMenuToggle}
-              className="rounded-md p-1.5 text-text-muted transition-colors hover:bg-surface hover:text-text-primary md:hidden"
+              aria-label="Open navigation menu"
+              className="rounded-md p-2.5 text-text-muted transition-colors hover:bg-surface hover:text-text-primary md:hidden"
             >
               <Menu className="h-5 w-5" />
             </button>

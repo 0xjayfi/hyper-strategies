@@ -146,11 +146,6 @@ interface LeaderboardTableProps {
 
 export function LeaderboardTable({ data, onSelectTrader }: LeaderboardTableProps) {
   const isMobile = useIsMobile();
-
-  if (isMobile) {
-    return <LeaderboardCardList data={data} onSelectTrader={onSelectTrader} />;
-  }
-
   const [sorting, setSorting] = useState<SortingState>([]);
   const navigate = useNavigate();
 
@@ -162,6 +157,10 @@ export function LeaderboardTable({ data, onSelectTrader }: LeaderboardTableProps
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
   });
+
+  if (isMobile) {
+    return <LeaderboardCardList data={data} onSelectTrader={onSelectTrader} />;
+  }
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
