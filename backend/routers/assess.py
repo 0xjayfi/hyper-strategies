@@ -26,6 +26,9 @@ router = APIRouter(prefix="/api/v1", tags=["assessment"])
 _ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
 CACHE_STALENESS_HOURS = 6
+# For on-demand assessment, accept DB metrics up to 30 days old to avoid
+# slow Nansen re-fetches.  Background recompute still uses the 6-hour window.
+ASSESS_STALENESS_HOURS = 30 * 24
 
 
 @router.get("/assess/{address}", response_model=AssessmentResponse)
@@ -55,16 +58,18 @@ async def assess_trader(
         last_trade_time = datastore.get_last_trade_time(address)
         if last_trade_time:
             computed = datetime.fromisoformat(last_trade_time).replace(tzinfo=timezone.utc)
-            if now - computed < timedelta(hours=CACHE_STALENESS_HOURS):
+            if now - computed < timedelta(hours=ASSESS_STALENESS_HOURS):
                 metrics = cached_metrics
                 is_cached = True
 
-    # Fetch positions once (used for account_value and strategy evaluation)
+    # Only fetch positions from Nansen when we need live data.
+    # When metrics are cached, skip the slow positions API call.
     pos_snapshot = None
-    try:
-        pos_snapshot = await nansen_client.fetch_address_positions(address)
-    except Exception:
-        logger.warning("Could not fetch positions for %s during assessment", address)
+    if metrics is None:
+        try:
+            pos_snapshot = await nansen_client.fetch_address_positions(address)
+        except Exception:
+            logger.warning("Could not fetch positions for %s during assessment", address)
 
     # Live fetch from Nansen if no cached data
     if metrics is None:

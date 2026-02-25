@@ -12,8 +12,6 @@ const STEPS = [
   { label: 'Finalizing assessment...', startPct: 95, endPct: 99, durationMs: 5000 },
 ] as const;
 
-const TOTAL_DURATION_MS = STEPS.reduce((sum, s) => sum + s.durationMs, 0);
-
 function getProgressAtTime(elapsedMs: number): { percentage: number; activeStep: number } {
   let accumulated = 0;
   for (let i = 0; i < STEPS.length; i++) {
