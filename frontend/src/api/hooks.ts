@@ -11,6 +11,7 @@ import type {
   PnlCurveResponse,
   AllocationsResponse,
   StrategiesResponse,
+  AssessmentResponse,
 } from './types';
 import { REFRESH_INTERVALS } from '../lib/constants';
 
@@ -101,6 +102,18 @@ export function useAllocationStrategies() {
     queryFn: () => apiClient.get<StrategiesResponse>('/api/v1/allocations/strategies'),
     refetchInterval: REFRESH_INTERVALS.allocations,
     staleTime: 5 * 60_000,
+  });
+}
+
+export function useAssessment(address: string, windowDays: number = 30) {
+  return useQuery({
+    queryKey: ['assessment', address, windowDays],
+    queryFn: () => apiClient.get<AssessmentResponse>(`/api/v1/assess/${address}`, {
+      window_days: windowDays,
+    }),
+    staleTime: 5 * 60_000,
+    enabled: !!address,
+    retry: 1,
   });
 }
 

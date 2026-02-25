@@ -209,3 +209,28 @@ export interface StrategiesResponse {
   consensus: Record<string, ConsensusToken>;
   sizing_params: SizingEntry[];
 }
+
+// Assessment
+export interface AssessmentStrategyResult {
+  name: string;
+  category: string;
+  score: number;
+  passed: boolean;
+  explanation: string;
+}
+
+export interface AssessmentConfidence {
+  passed: number;
+  total: number;
+  tier: string;
+}
+
+export interface AssessmentResponse {
+  address: string;
+  is_cached: boolean;
+  window_days: number;
+  trade_count: number;
+  confidence: AssessmentConfidence;
+  strategies: AssessmentStrategyResult[];
+  computed_at: string;
+}
