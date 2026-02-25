@@ -148,3 +148,16 @@ STRATEGY_DB_PATH: str = os.environ.get("SNAP_STRATEGY_DB_PATH", "")
 ACCOUNT_VALUE: float = float(os.environ.get("SNAP_ACCOUNT_VALUE", "10000"))
 LOG_FILE: str | None = os.environ.get("SNAP_LOG_FILE")
 DASHBOARD_FILE: str | None = os.environ.get("SNAP_DASHBOARD_FILE")
+
+# ===========================================================================
+# ML Trader Selection (Phase 10)
+# ===========================================================================
+ML_TRADER_SELECTION: bool = os.environ.get(
+    "SNAP_ML_TRADER_SELECTION", "false"
+).lower() in ("true", "1", "yes")
+ML_MODEL_DIR: str = os.environ.get("SNAP_ML_MODEL_DIR", "models/")
+ML_FORWARD_WINDOW_DAYS: int = int(os.environ.get("SNAP_ML_FORWARD_DAYS", "7"))
+ML_RETRAIN_CADENCE_DAYS: int = int(os.environ.get("SNAP_ML_RETRAIN_DAYS", "7"))
+ML_SNAPSHOT_HOUR_UTC: int = int(os.environ.get("SNAP_ML_SNAPSHOT_HOUR", "1"))
+ML_MIN_TRAIN_SAMPLES: int = int(os.environ.get("SNAP_ML_MIN_SAMPLES", "5000"))
+ML_BACKFILL_STRIDE_DAYS: int = int(os.environ.get("SNAP_ML_STRIDE_DAYS", "3"))
