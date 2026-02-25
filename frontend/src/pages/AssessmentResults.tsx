@@ -2,12 +2,14 @@ import { useParams, Link } from 'react-router';
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer } from 'recharts';
 import { ArrowLeft, CheckCircle2, XCircle, Shield } from 'lucide-react';
 import { PageLayout } from '../components/layout/PageLayout';
-import { LoadingState } from '../components/shared/LoadingState';
 import { ErrorState } from '../components/shared/ErrorState';
 import { useAssessment } from '../api/hooks';
 import type { AssessmentStrategyResult } from '../api/types';
 import { cn } from '../lib/utils';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
+import { AssessmentProgress } from '../components/assess/AssessmentProgress';
+import { NansenIcon } from '../components/icons/NansenIcon';
 import { ScorecardCardList } from '../components/shared/ScorecardCard';
 
 const TIER_COLORS: Record<string, string> = {
@@ -120,11 +122,12 @@ export function AssessmentResults() {
   const { address } = useParams<{ address: string }>();
   const { data, isLoading, isError, error, refetch } = useAssessment(address || '');
   const isMobile = useIsMobile();
+  const showProgress = useDelayedLoading(300);
 
   if (isLoading) {
     return (
       <PageLayout title="Assessing Trader...">
-        <LoadingState message="Fetching trades and computing strategies..." />
+        {showProgress ? <AssessmentProgress /> : null}
       </PageLayout>
     );
   }
@@ -168,6 +171,11 @@ export function AssessmentResults() {
           {data.is_cached && (
             <span className="rounded bg-surface px-2 py-0.5 text-xs text-text-muted">Cached</span>
           )}
+
+          <span className="flex items-center gap-1 text-xs text-text-muted/60">
+            <NansenIcon className="h-3.5 w-3.5" />
+            Data by Nansen
+          </span>
 
           <span className="text-xs text-text-muted">
             {data.trade_count} trades ({data.window_days}d)
