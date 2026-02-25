@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Menu } from 'lucide-react';
 
 interface HeaderProps {
   title: string;
   lastUpdated?: string;
   onRefresh?: () => void;
   isRefreshing?: boolean;
+  onMenuToggle?: () => void;
 }
 
 function timeAgo(isoString: string): string {
@@ -16,7 +17,7 @@ function timeAgo(isoString: string): string {
   return `${minutes} minutes ago`;
 }
 
-export function Header({ title, lastUpdated, onRefresh, isRefreshing }: HeaderProps) {
+export function Header({ title, lastUpdated, onRefresh, isRefreshing, onMenuToggle }: HeaderProps) {
   const [, setTick] = useState(0);
 
   // Re-render every 30s to keep "X minutes ago" fresh
@@ -35,8 +36,18 @@ export function Header({ title, lastUpdated, onRefresh, isRefreshing }: HeaderPr
         </div>
       )}
 
-      <header className="flex h-14 items-center justify-between border-b border-border px-6">
-        <h1 className="text-lg font-semibold text-text-primary">{title}</h1>
+      <header className="flex h-14 items-center justify-between border-b border-border px-4 md:px-6">
+        <div className="flex items-center gap-3">
+          {onMenuToggle && (
+            <button
+              onClick={onMenuToggle}
+              className="rounded-md p-1.5 text-text-muted transition-colors hover:bg-surface hover:text-text-primary md:hidden"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+          )}
+          <h1 className="text-lg font-semibold text-text-primary">{title}</h1>
+        </div>
         <div className="flex items-center gap-3">
           {lastUpdated && (
             <span className="text-xs text-text-muted">

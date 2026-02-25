@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from 'react';
 import { Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { Sidebar } from './Sidebar';
+import { MobileNav } from './MobileNav';
 import { Header } from './Header';
 
 interface PageLayoutProps {
@@ -14,18 +15,21 @@ interface PageLayoutProps {
 
 export function PageLayout({ title, description, lastUpdated, onRefresh, isRefreshing, children }: PageLayoutProps) {
   const [showDesc, setShowDesc] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
+      <MobileNav open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header
           title={title}
           lastUpdated={lastUpdated}
           onRefresh={onRefresh}
           isRefreshing={isRefreshing}
+          onMenuToggle={() => setMobileNavOpen(true)}
         />
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6">
           {description && (
             <div className="mb-4 rounded-lg border border-border bg-card">
               <button
