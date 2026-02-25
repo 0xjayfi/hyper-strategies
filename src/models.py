@@ -278,4 +278,8 @@ class TradeMetrics(BaseModel):
             total_pnl=0.0,
             roi_proxy=0.0,
             max_drawdown_proxy=0.0,
+            max_leverage=0.0,
+            leverage_std=0.0,
+            largest_trade_pnl_ratio=0.0,
+            pnl_trend_slope=0.0,
         )
