@@ -1,4 +1,4 @@
-import { useState, FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { Search, Clock, ArrowRight } from 'lucide-react';
 import { PageLayout } from '../components/layout/PageLayout';
