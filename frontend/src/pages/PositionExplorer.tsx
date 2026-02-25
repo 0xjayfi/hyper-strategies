@@ -85,7 +85,7 @@ Auto-refresh: every 5 minutes.`}
 
         {/* Meta Summary */}
         {data?.meta && (
-          <div className="flex gap-6 rounded-lg border border-border bg-card px-4 py-3">
+          <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card px-3 py-3 md:flex md:gap-6 md:px-4">
             <div>
               <span className="text-xs text-text-muted">Total Long</span>
               <div className="font-mono-nums text-sm text-green">

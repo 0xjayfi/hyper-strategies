@@ -26,7 +26,7 @@ export function PositionFilters({
   onSmartMoneyChange,
 }: PositionFiltersProps) {
   return (
-    <div className="flex flex-wrap items-center gap-4">
+    <div className="flex flex-wrap items-center gap-3 md:gap-4">
       {/* Token Selector */}
       <div className="flex rounded-md border border-border">
         {TOKENS.map((t) => (
