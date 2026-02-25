@@ -237,6 +237,7 @@ CREATE TABLE IF NOT EXISTS ml_feature_snapshots (
     consistency_score       REAL,
     smart_money_bonus       REAL,
     risk_mgmt_score         REAL,
+    recency_decay           REAL,
     position_concentration  REAL,
     num_open_positions      INTEGER,
     avg_leverage            REAL,
