@@ -78,7 +78,7 @@ export function AssessTrader() {
                 <button
                   key={addr}
                   onClick={() => { addToHistory(addr); navigate(`/assess/${addr}`); }}
-                  className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left font-mono text-sm text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
+                  className="group flex w-full items-center gap-3 rounded-md px-3 py-2 text-left font-mono text-sm text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
                 >
                   <span className="truncate">{addr}</span>
                   <ArrowRight className="ml-auto h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />

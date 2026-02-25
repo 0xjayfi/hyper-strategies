@@ -15,8 +15,13 @@ class ProfitFactorStrategy(BaseStrategy):
     def evaluate(self, metrics: TradeMetrics, positions: list) -> StrategyResult:
         pf = metrics.profit_factor
         passed = pf >= self.PASS_THRESHOLD
-        score = int(min(100, max(0, (pf - self.MIN_PF) / (self.MAX_PF - self.MIN_PF) * 100)))
-        explanation = f"Profit factor of {pf:.2f}, {'above' if passed else 'below'} {self.PASS_THRESHOLD} threshold"
+        if pf == float("inf"):
+            score = 100
+            pf_display = ">3.0 (no losses)"
+        else:
+            score = int(min(100, max(0, (pf - self.MIN_PF) / (self.MAX_PF - self.MIN_PF) * 100)))
+            pf_display = f"{pf:.2f}"
+        explanation = f"Profit factor of {pf_display}, {'above' if passed else 'below'} {self.PASS_THRESHOLD} threshold"
         return StrategyResult(
             name=self.name, category=self.category,
             score=score, passed=passed, explanation=explanation,

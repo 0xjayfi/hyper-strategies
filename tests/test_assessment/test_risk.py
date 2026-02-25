@@ -40,6 +40,14 @@ class TestLeverageStrategy:
         assert r.passed is True
         assert 30 < r.score < 80
 
+    def test_leverage_std_affects_score(self):
+        """Higher leverage_std should produce a lower score for same max_leverage."""
+        m_low_std = make_metrics(max_leverage=10.0, leverage_std=1.0)
+        m_high_std = make_metrics(max_leverage=10.0, leverage_std=7.0)
+        r_low = LeverageStrategy().evaluate(m_low_std, [])
+        r_high = LeverageStrategy().evaluate(m_high_std, [])
+        assert r_low.score > r_high.score
+
 
 class TestPositionSizingStrategy:
     def test_diversified_passes(self):

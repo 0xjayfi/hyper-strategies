@@ -59,6 +59,13 @@ async def assess_trader(
                 metrics = cached_metrics
                 is_cached = True
 
+    # Fetch positions once (used for account_value and strategy evaluation)
+    pos_snapshot = None
+    try:
+        pos_snapshot = await nansen_client.fetch_address_positions(address)
+    except Exception:
+        logger.warning("Could not fetch positions for %s during assessment", address)
+
     # Live fetch from Nansen if no cached data
     if metrics is None:
         date_to = now.strftime("%Y-%m-%d")
@@ -78,19 +85,15 @@ async def assess_trader(
             raise HTTPException(status_code=502, detail="Failed to fetch trade data from upstream API. Please try again.")
 
         account_value = 0.0
-        try:
-            position_snapshot = await nansen_client.fetch_address_positions(address)
-            av_str = position_snapshot.margin_summary_account_value_usd
+        if pos_snapshot is not None:
+            av_str = pos_snapshot.margin_summary_account_value_usd
             account_value = float(av_str) if av_str else 0.0
-        except Exception:
-            logger.warning("Could not fetch account value for %s, using 0", address)
 
         metrics = compute_trade_metrics(raw_trades, account_value, window_days)
 
-    # Fetch current positions
+    # Extract positions list for strategy evaluation
     positions = []
-    try:
-        pos_snapshot = await nansen_client.fetch_address_positions(address)
+    if pos_snapshot is not None:
         for ap in pos_snapshot.asset_positions:
             p = ap.position
             positions.append({
@@ -99,8 +102,6 @@ async def assess_trader(
                 "leverage_type": p.leverage_type,
                 "position_value_usd": float(p.position_value_usd) if p.position_value_usd else 0.0,
             })
-    except Exception:
-        logger.warning("Could not fetch positions for %s during assessment", address)
 
     engine = AssessmentEngine()
     result = engine.assess(metrics, positions)
