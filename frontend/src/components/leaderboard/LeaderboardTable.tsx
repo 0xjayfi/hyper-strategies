@@ -14,6 +14,8 @@ import { formatPct, truncateAddress } from '../../lib/utils';
 import { PnlDisplay } from '../shared/PnlDisplay';
 import { SmartMoneyBadge } from '../shared/SmartMoneyBadge';
 import { FilterBadges } from './FilterBadges';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { LeaderboardCardList } from './LeaderboardCard';
 
 const columnHelper = createColumnHelper<LeaderboardTrader>();
 
@@ -143,6 +145,12 @@ interface LeaderboardTableProps {
 }
 
 export function LeaderboardTable({ data, onSelectTrader }: LeaderboardTableProps) {
+  const isMobile = useIsMobile();
+
+  if (isMobile) {
+    return <LeaderboardCardList data={data} onSelectTrader={onSelectTrader} />;
+  }
+
   const [sorting, setSorting] = useState<SortingState>([]);
   const navigate = useNavigate();
 

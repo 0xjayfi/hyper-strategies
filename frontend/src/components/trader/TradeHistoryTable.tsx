@@ -13,6 +13,8 @@ import type { TradeItem } from '../../api/types';
 import { formatUsd } from '../../lib/utils';
 import { TokenBadge } from '../shared/TokenBadge';
 import { PnlDisplay } from '../shared/PnlDisplay';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { TradeHistoryCardList } from './TradeHistoryCard';
 
 const columnHelper = createColumnHelper<TradeItem>();
 
@@ -98,6 +100,12 @@ interface TradeHistoryTableProps {
 }
 
 export function TradeHistoryTable({ data }: TradeHistoryTableProps) {
+  const isMobile = useIsMobile();
+
+  if (isMobile) {
+    return <TradeHistoryCardList data={data} />;
+  }
+
   const [sorting, setSorting] = useState<SortingState>([{ id: 'timestamp', desc: true }]);
 
   const table = useReactTable({
