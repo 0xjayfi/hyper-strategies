@@ -87,7 +87,7 @@ Auto-refresh: every 1 hour.`}
       onRefresh={() => { alloc.refetch(); strat.refetch(); }}
       isRefreshing={alloc.isFetching || strat.isFetching}
     >
-      <div className="space-y-6">
+      <div className="space-y-4 md:space-y-6">
         {isLoading ? (
           <LoadingState message="Loading allocation data..." />
         ) : isError ? (
@@ -105,11 +105,11 @@ Auto-refresh: every 1 hour.`}
         ) : (
           <>
             {/* Top row: Donut + Risk Gauges */}
-            <div className="grid grid-cols-5 gap-4">
-              <div className="col-span-3">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+              <div className="md:col-span-3">
                 <WeightsDonut allocations={alloc.data.allocations} />
               </div>
-              <div className="col-span-2">
+              <div className="md:col-span-2">
                 <RiskGauges riskCaps={alloc.data.risk_caps} />
               </div>
             </div>
@@ -122,12 +122,12 @@ Auto-refresh: every 1 hour.`}
 
             {/* Strategy Tabs */}
             <div>
-              <div className="flex border-b border-border">
+              <div className="flex overflow-x-auto border-b border-border">
                 {TABS.map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
-                    className={`px-4 py-2 text-sm font-medium transition-colors ${
+                    className={`whitespace-nowrap px-4 py-2 text-sm font-medium transition-colors ${
                       activeTab === tab
                         ? 'border-b-2 border-accent text-accent'
                         : 'text-text-muted hover:text-text-primary'

@@ -57,7 +57,7 @@ export function RiskGauges({ riskCaps }: RiskGaugesProps) {
       <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-text-muted">
         Risk Caps
       </h3>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
         {gauges.map(({ label, capKey }) => (
           <GaugeBar
             key={capKey}

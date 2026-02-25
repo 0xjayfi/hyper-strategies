@@ -56,7 +56,7 @@ export function ConsensusCards({ consensus }: ConsensusCardsProps) {
         </ul>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4 md:gap-4">
         {entries.map(([token, data]) => {
           const isLong = data.direction.toLowerCase() === 'long' || data.direction.toLowerCase() === 'bullish';
           const color = isLong ? '#3fb950' : '#f85149';

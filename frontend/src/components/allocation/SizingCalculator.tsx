@@ -66,7 +66,7 @@ export function SizingCalculator({ sizingParams }: SizingCalculatorProps) {
         <h3 className="mb-4 text-xs font-medium uppercase tracking-wider text-text-muted">
           Position Sizing Calculator
         </h3>
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6">
           <div className="space-y-4">
             <div>
               <label className="mb-1 block text-xs text-text-muted">Trader</label>
