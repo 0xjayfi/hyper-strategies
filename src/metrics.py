@@ -72,6 +72,27 @@ def compute_trade_metrics(trades: list[Trade], account_value: float, window_days
                 worst_trade_dd = dd
     max_drawdown_proxy = worst_trade_dd
 
+    # --- Extended fields for assessment strategies ---
+    leverages = []
+    for t in close_trades:
+        if account_value > 0:
+            leverages.append(t.value_usd / account_value)
+    max_leverage = max(leverages) if leverages else 0.0
+    leverage_std_val = float(np.std(leverages, ddof=1)) if len(leverages) > 1 else 0.0
+
+    abs_pnls = [abs(t.closed_pnl) for t in close_trades]
+    total_abs_pnl = sum(abs_pnls)
+    largest_trade_pnl_ratio = max(abs_pnls) / total_abs_pnl if total_abs_pnl > 0 else 0.0
+
+    sorted_trades = sorted(close_trades, key=lambda t: t.timestamp)
+    mid = len(sorted_trades) // 2
+    if mid > 0:
+        first_half_pnl = sum(t.closed_pnl for t in sorted_trades[:mid])
+        second_half_pnl = sum(t.closed_pnl for t in sorted_trades[mid:])
+        pnl_trend_slope = (second_half_pnl - first_half_pnl) / total_abs_pnl if total_abs_pnl > 0 else 0.0
+    else:
+        pnl_trend_slope = 0.0
+
     return TradeMetrics(
         window_days=window_days,
         total_trades=total_trades,
@@ -87,6 +108,10 @@ def compute_trade_metrics(trades: list[Trade], account_value: float, window_days
         total_pnl=total_pnl,
         roi_proxy=roi_proxy,
         max_drawdown_proxy=max_drawdown_proxy,
+        max_leverage=max_leverage,
+        leverage_std=leverage_std_val,
+        largest_trade_pnl_ratio=largest_trade_pnl_ratio,
+        pnl_trend_slope=pnl_trend_slope,
     )
 
 
