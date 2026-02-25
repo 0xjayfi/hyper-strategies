@@ -44,7 +44,7 @@ export function AssessTrader() {
       title="Assess Trader"
       description="Evaluate any Hyperliquid trader address across 10 independent scoring strategies. Get a quality verdict with confidence tier based on how many strategies the address passes."
     >
-      <div className="mx-auto max-w-2xl pt-12">
+      <div className="mx-auto max-w-2xl pt-6 md:pt-12">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="relative">
             <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-text-muted" />
