@@ -41,7 +41,7 @@ export function PnlCurveChart({ points }: PnlCurveChartProps) {
 
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: 300,
+      height: container.clientHeight,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: '#8b949e',
@@ -122,7 +122,7 @@ export function PnlCurveChart({ points }: PnlCurveChartProps) {
           ))}
         </div>
       </div>
-      <div ref={chartContainerRef} style={{ height: 300 }} />
+      <div ref={chartContainerRef} className="h-[220px] md:h-[300px]" />
     </div>
   );
 }

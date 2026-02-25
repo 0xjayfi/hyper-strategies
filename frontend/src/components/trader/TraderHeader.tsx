@@ -26,11 +26,11 @@ export function TraderHeader({ trader }: TraderHeaderProps) {
         </div>
       )}
 
-      <div className="rounded-lg border border-border bg-card p-5">
+      <div className="rounded-lg border border-border bg-card p-4 md:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-2">
             {trader.label && (
-              <h2 className="text-xl font-semibold text-text-primary">{trader.label}</h2>
+              <h2 className="text-lg md:text-xl font-semibold text-text-primary">{trader.label}</h2>
             )}
             <div className="flex items-center gap-2">
               <span className="font-mono-nums text-sm text-text-muted" title={trader.address}>
@@ -58,7 +58,7 @@ export function TraderHeader({ trader }: TraderHeaderProps) {
             {trader.account_value_usd != null && (
               <div className="text-right">
                 <span className="text-xs text-text-muted">Account Value</span>
-                <div className="font-mono-nums text-lg text-text-primary">
+                <div className="font-mono-nums text-base md:text-lg text-text-primary">
                   {formatUsd(trader.account_value_usd, true)}
                 </div>
               </div>
@@ -66,7 +66,7 @@ export function TraderHeader({ trader }: TraderHeaderProps) {
             {trader.allocation_weight != null && (
               <div className="text-right">
                 <span className="text-xs text-text-muted">Allocation</span>
-                <div className="font-mono-nums text-lg text-accent">
+                <div className="font-mono-nums text-base md:text-lg text-accent">
                   {(trader.allocation_weight * 100).toFixed(1)}%
                 </div>
               </div>
