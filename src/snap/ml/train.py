@@ -38,7 +38,14 @@ def train_model(
 
     Uses chronological split and early stopping on validation set.
     """
-    train_df, val_df, test_df = split_dataset_chronological(df, val_frac, test_frac)
+    # Replace inf values with NaN, then fill NaN with 0 — profit_factor
+    # can be inf when a trader has no losing trades.
+    clean_df = df.copy()
+    clean_df[FEATURE_COLUMNS] = clean_df[FEATURE_COLUMNS].replace(
+        [np.inf, -np.inf], np.nan
+    ).fillna(0.0)
+
+    train_df, val_df, test_df = split_dataset_chronological(clean_df, val_frac, test_frac)
 
     X_train = train_df[FEATURE_COLUMNS].values
     y_train = train_df["forward_pnl_7d"].values
