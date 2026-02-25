@@ -32,8 +32,9 @@ def compute_trade_metrics(trades: list[Trade], account_value: float, window_days
     Returns:
         TradeMetrics object with computed statistics
     """
-    # Filter to closing trades with realized PnL
-    close_trades = [t for t in trades if t.action in ("Close", "Reduce") and t.closed_pnl != 0]
+    # Filter to trades with realized PnL (any action type — Hyperliquid
+    # can attach closed_pnl to Open, Add, Reduce, or Close actions)
+    close_trades = [t for t in trades if t.closed_pnl != 0]
 
     total_trades = len(close_trades)
     if total_trades == 0:

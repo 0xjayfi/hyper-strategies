@@ -48,6 +48,11 @@ export function AssessmentProgress() {
 
   return (
     <div className="mx-auto max-w-md py-12">
+      {/* Live analysis banner */}
+      <div className="mb-6 rounded-lg border border-border bg-card px-4 py-3 text-center text-sm text-text-muted">
+        This address has not been assessed before — running live analysis
+      </div>
+
       {/* Percentage counter */}
       <div className="mb-6 text-center">
         <span className="text-5xl font-bold tabular-nums text-text-primary">
