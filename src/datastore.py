@@ -684,6 +684,50 @@ class DataStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_position_snapshot_series(self, address: str, days: int = 30) -> list[dict]:
+        """Return all position snapshots for an address within the last N days.
+
+        Returns a flat list of snapshot rows ordered by captured_at ASC.
+        Each row includes all position_snapshots columns.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            """
+            SELECT * FROM position_snapshots
+             WHERE address = ? AND captured_at >= ?
+             ORDER BY captured_at ASC
+            """,
+            (address, cutoff),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_account_value_series(self, address: str, days: int = 30) -> list[dict]:
+        """Return deduplicated account value time series for an address.
+
+        Groups by captured_at and returns one row per snapshot timestamp
+        with the account_value and total position value sum.
+
+        Returns list of dicts: [{"captured_at": str, "account_value": float,
+        "total_position_value": float, "total_unrealized_pnl": float,
+        "position_count": int}]
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            """
+            SELECT captured_at,
+                   MAX(account_value) AS account_value,
+                   SUM(position_value_usd) AS total_position_value,
+                   SUM(unrealized_pnl) AS total_unrealized_pnl,
+                   COUNT(*) AS position_count
+              FROM position_snapshots
+             WHERE address = ? AND captured_at >= ?
+             GROUP BY captured_at
+             ORDER BY captured_at ASC
+            """,
+            (address, cutoff),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # ------------------------------------------------------------------
     # Activity helpers
     # ------------------------------------------------------------------

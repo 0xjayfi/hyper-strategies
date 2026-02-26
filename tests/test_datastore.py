@@ -815,3 +815,54 @@ class TestEdgeCases:
 
         history = ds.get_position_history("0x000", "BTC", lookback_hours=24)
         assert history == []
+
+
+# ===================================================================
+# Position Snapshot Series (Time-Series Queries)
+# ===================================================================
+
+
+class TestPositionSnapshotSeries:
+    """Tests for position snapshot time-series query methods."""
+
+    def test_get_position_snapshot_series(self, ds: DataStore) -> None:
+        """Returns all snapshots for an address within a day window."""
+        ds.upsert_trader("0xA", label="Trader A")
+        # Insert two snapshots at different times
+        ds.insert_position_snapshot("0xA", [
+            {"token_symbol": "BTC", "side": "Long", "position_value_usd": 10000,
+             "entry_price": 50000, "leverage_value": 5.0, "leverage_type": "cross",
+             "liquidation_price": 40000, "unrealized_pnl": 500, "account_value": 100000}
+        ])
+        # Simulate a second snapshot 1 hour later
+        import time; time.sleep(0.01)
+        ds.insert_position_snapshot("0xA", [
+            {"token_symbol": "BTC", "side": "Long", "position_value_usd": 10500,
+             "entry_price": 50000, "leverage_value": 5.0, "leverage_type": "cross",
+             "liquidation_price": 40000, "unrealized_pnl": 1000, "account_value": 101000}
+        ])
+        series = ds.get_position_snapshot_series("0xA", days=30)
+        assert len(series) == 2
+        assert series[0]["account_value"] == 100000
+        assert series[1]["account_value"] == 101000
+
+    def test_get_position_snapshot_series_empty(self, ds: DataStore) -> None:
+        """Returns empty list for unknown address."""
+        result = ds.get_position_snapshot_series("0xNONE", days=30)
+        assert result == []
+
+    def test_get_account_value_series(self, ds: DataStore) -> None:
+        """Returns deduplicated account value time series."""
+        ds.upsert_trader("0xA", label="Trader A")
+        ds.insert_position_snapshot("0xA", [
+            {"token_symbol": "BTC", "side": "Long", "position_value_usd": 10000,
+             "entry_price": 50000, "leverage_value": 5.0, "leverage_type": "cross",
+             "liquidation_price": 40000, "unrealized_pnl": 500, "account_value": 100000},
+            {"token_symbol": "ETH", "side": "Short", "position_value_usd": 5000,
+             "entry_price": 3000, "leverage_value": 3.0, "leverage_type": "cross",
+             "liquidation_price": 3500, "unrealized_pnl": -200, "account_value": 100000},
+        ])
+        series = ds.get_account_value_series("0xA", days=30)
+        # Should deduplicate: one entry per captured_at, not per position
+        assert len(series) == 1
+        assert series[0]["account_value"] == 100000
