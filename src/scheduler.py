@@ -1,11 +1,11 @@
 """
-Phase 8: Scheduler & Orchestration
+Scheduler & Orchestration — Position-Only Pipeline
 
-Coordinates periodic tasks:
-- Leaderboard refresh (daily)
-- Full recompute cycle (every 6 hours)
-- Position monitoring (every 15 minutes)
-- Cleanup tasks (daily)
+Coordinates 4 periodic tasks:
+1. Position sweep (hourly): snapshot positions for all active traders
+2. Position scoring (hourly, after sweep): metrics -> score -> filter -> allocate
+3. Leaderboard refresh (daily): fetch top 100 traders (2 pages of 50)
+4. Cleanup (daily): expire blacklist entries, enforce data retention
 """
 
 import asyncio
@@ -15,15 +15,14 @@ from typing import Dict
 
 from .nansen_client import NansenClient
 from .datastore import DataStore
-from .metrics import recompute_all_metrics
-from .scoring import compute_trader_score
-from .filters import is_fully_eligible
+from .position_metrics import compute_position_metrics
+from .position_scoring import compute_position_score
+from .filters import is_position_eligible
 from .allocation import compute_allocations, RiskConfig
-from .position_monitor import monitor_positions
+from .position_monitor import snapshot_positions_for_trader
 from .config import (
-    METRICS_RECOMPUTE_HOURS,
-    POSITION_MONITOR_MINUTES,
-    LEADERBOARD_REFRESH_CRON,
+    POSITION_SNAPSHOT_MINUTES,
+    POSITION_SCORING_MINUTES,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,148 +85,209 @@ async def refresh_leaderboard(nansen_client: NansenClient, datastore: DataStore)
         raise
 
 
-async def full_recompute_cycle(
+async def position_sweep(
     nansen_client: NansenClient,
     datastore: DataStore,
-    risk_config: RiskConfig
-) -> Dict[str, float]:
+) -> None:
     """
-    Main orchestration: recompute metrics, scores, and allocations.
+    Snapshot current positions for all active traders.
+
+    Called hourly to build the position time series used by the scoring
+    pipeline.
 
     Args:
         nansen_client: Async Nansen API client
+        datastore: SQLite datastore
+    """
+    traders = datastore.get_active_traders()
+    logger.info("Position sweep: snapshotting %d traders", len(traders))
+
+    for address in traders:
+        await snapshot_positions_for_trader(address, nansen_client, datastore)
+
+    logger.info("Position sweep complete: %d traders snapshotted", len(traders))
+
+
+async def position_scoring_cycle(
+    nansen_client: NansenClient,
+    datastore: DataStore,
+    risk_config: RiskConfig,
+) -> Dict[str, float]:
+    """
+    Position-only scoring pipeline: metrics -> score -> filter -> allocate.
+
+    For each active trader:
+    1. Retrieve 30-day account value series and position snapshots
+    2. Compute position-based metrics
+    3. Check position-based eligibility
+    4. Compute position-based composite score
+    5. Store score
+    After all traders scored, compute and store allocations.
+
+    Args:
+        nansen_client: Async Nansen API client (unused but kept for signature compat)
         datastore: SQLite datastore
         risk_config: Risk configuration for allocation
 
     Returns:
         New allocations dict {address: weight}
     """
-    logger.info("Starting full recompute cycle")
+    logger.info("Starting position scoring cycle")
 
     try:
         # Step 1: Get active traders
         traders = datastore.get_active_traders()
-        logger.info(f"Processing {len(traders)} active traders")
+        logger.info(f"Scoring {len(traders)} active traders")
 
         if not traders:
             logger.warning("No active traders found")
             return {}
 
-        # Step 2: Recompute metrics for all traders
-        logger.info("Recomputing trade metrics for all windows")
-        await recompute_all_metrics(
-            nansen_client=nansen_client,
-            datastore=datastore,
-            trader_addresses=traders,
-            windows=[7, 30, 90]
-        )
-
-        # Step 3: Score each trader and collect eligible ones
+        # Step 2: Score each trader
         eligible_traders = []
         scores = {}
 
         for address in traders:
-            # Get metrics for all windows
-            m7 = datastore.get_latest_metrics(address, window_days=7)
-            m30 = datastore.get_latest_metrics(address, window_days=30)
-            m90 = datastore.get_latest_metrics(address, window_days=90)
+            # Get 30-day time series data
+            account_series = datastore.get_account_value_series(address, days=30)
+            position_snapshots = datastore.get_position_snapshot_series(address, days=30)
 
-            # Skip if any window missing
-            if not m7 or not m30 or not m90:
-                logger.debug(f"Skipping {address}: missing metrics")
+            # Skip if insufficient data
+            if len(account_series) < 2:
+                logger.debug(f"Skipping {address}: insufficient account series ({len(account_series)} points)")
                 continue
 
-            # Check eligibility
-            is_eligible, reason = is_fully_eligible(address, m7, m30, m90, datastore)
+            # Compute position-based metrics
+            metrics = compute_position_metrics(account_series, position_snapshots)
 
-            # Get additional data for scoring
+            # Check position-based eligibility
+            is_eligible, reason = is_position_eligible(address, metrics, datastore)
+
+            # Get label for smart money bonus
             label = datastore.get_trader_label(address)
-            positions = datastore.get_latest_position_snapshot(address)
-            last_trade_time_str = datastore.get_last_trade_time(address)
 
-            # Compute hours since last trade
-            if last_trade_time_str:
-                try:
-                    last_trade_time = datetime.fromisoformat(last_trade_time_str)
-                    if last_trade_time.tzinfo is None:
-                        last_trade_time = last_trade_time.replace(tzinfo=timezone.utc)
-                    hours_since = (datetime.now(timezone.utc) - last_trade_time).total_seconds() / 3600
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Invalid last_trade_time for {address}: {last_trade_time_str} ({e})")
-                    hours_since = 9999  # Default to very old
-            else:
-                hours_since = 9999  # No trades on record
+            # Compute hours since last snapshot with positions
+            hours_since = _hours_since_last_snapshot(address, datastore)
 
-            # Compute score
-            score_dict = compute_trader_score(
-                metrics_7d=m7,
-                metrics_30d=m30,
-                metrics_90d=m90,
+            # Compute position-based score
+            score_dict = compute_position_score(
+                metrics=metrics,
                 label=label,
-                positions=positions,
-                hours_since_last_trade=hours_since
+                hours_since_last_snapshot=hours_since,
             )
 
-            # Override passes_anti_luck based on eligibility
-            score_dict["passes_anti_luck"] = 1 if is_eligible else 0
+            # Add fields required by insert_score and compute_allocations
+            # Map position score components to the trader_scores schema
+            score_for_db = _map_score_to_db_schema(score_dict, is_eligible)
 
             # Store score
-            datastore.insert_score(address, score_dict)
+            datastore.insert_score(address, score_for_db)
 
             # Add to eligible list if passed
             if is_eligible:
                 eligible_traders.append(address)
-                scores[address] = score_dict
+                scores[address] = score_for_db
                 logger.debug(f"Trader {address} eligible with score {score_dict['final_score']:.4f}")
             else:
                 logger.info(f"Trader {address} filtered: {reason}")
 
         logger.info(f"Found {len(eligible_traders)} eligible traders out of {len(traders)}")
 
-        # Step 4: Get old allocations
+        # Step 3: Get old allocations for turnover limiting
         old_allocations = datastore.get_latest_allocations()
 
-        # Step 5: Build trader positions dict
+        # Step 4: Build trader positions dict for risk-cap checks
         trader_positions = {}
         for address in eligible_traders:
             positions = datastore.get_latest_position_snapshot(address)
             trader_positions[address] = positions
 
-        # Step 6: Compute new allocations
+        # Step 5: Compute new allocations
         new_allocations = compute_allocations(
             eligible_traders=eligible_traders,
             scores=scores,
             old_allocations=old_allocations,
             trader_positions=trader_positions,
-            risk_config=risk_config
+            risk_config=risk_config,
         )
 
-        # Step 7: Store allocations
+        # Step 6: Store allocations
         datastore.insert_allocations(new_allocations)
 
-        logger.info(f"Recompute cycle complete: {len(new_allocations)} allocations generated")
-        logger.info(f"Allocation summary: {dict(sorted(new_allocations.items(), key=lambda x: x[1], reverse=True)[:5])}")
+        logger.info(f"Position scoring cycle complete: {len(new_allocations)} allocations generated")
+        if new_allocations:
+            top5 = dict(sorted(new_allocations.items(), key=lambda x: x[1], reverse=True)[:5])
+            logger.info(f"Allocation summary: {top5}")
 
         return new_allocations
 
     except Exception as e:
-        logger.error(f"Full recompute cycle failed: {e}", exc_info=True)
+        logger.error(f"Position scoring cycle failed: {e}", exc_info=True)
         raise
+
+
+def _hours_since_last_snapshot(address: str, datastore: DataStore) -> float:
+    """Compute hours since the trader's most recent position snapshot."""
+    latest = datastore.get_latest_position_snapshot(address)
+    if not latest:
+        return 9999.0
+
+    # All rows in a snapshot share the same captured_at
+    captured_at_str = latest[0].get("captured_at")
+    if not captured_at_str:
+        return 9999.0
+
+    try:
+        captured_at = datetime.fromisoformat(captured_at_str)
+        if captured_at.tzinfo is None:
+            captured_at = captured_at.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - captured_at).total_seconds() / 3600
+    except (ValueError, TypeError):
+        return 9999.0
+
+
+def _map_score_to_db_schema(score_dict: dict, is_eligible: bool) -> dict:
+    """Map position-based score components to the trader_scores DB schema.
+
+    The trader_scores table expects trade-based column names. We map the
+    6 position-based components into the closest corresponding columns,
+    setting unused columns to 0.0.
+
+    This also adds the ``roi_tier_multiplier`` (always 1.0 for position-based
+    scoring, since we don't have per-trade ROI tiers) and ``passes_anti_luck``
+    fields needed by compute_allocations and insert_score.
+    """
+    return {
+        # Map position components to DB columns
+        "normalized_roi": score_dict.get("account_growth_score", 0.0),
+        "normalized_sharpe": score_dict.get("drawdown_score", 0.0),
+        "normalized_win_rate": score_dict.get("leverage_score", 0.0),
+        "consistency_score": score_dict.get("consistency_score", 0.0),
+        "smart_money_bonus": score_dict.get("smart_money_bonus", 1.0),
+        "risk_management_score": score_dict.get("liquidation_distance_score", 0.0),
+        "style_multiplier": score_dict.get("diversity_score", 0.0),
+        "recency_decay": score_dict.get("recency_decay", 1.0),
+        "raw_composite_score": score_dict.get("raw_composite_score", 0.0),
+        "final_score": score_dict.get("final_score", 0.0),
+        # Position-based scoring doesn't use ROI tiers — neutral 1.0
+        "roi_tier_multiplier": 1.0,
+        "passes_anti_luck": 1 if is_eligible else 0,
+    }
 
 
 async def run_scheduler(
     nansen_client: NansenClient,
     datastore: DataStore,
-    risk_config: RiskConfig
+    risk_config: RiskConfig,
 ) -> None:
     """
     Main scheduler loop running all periodic tasks.
 
     Tasks:
-    - Leaderboard refresh: daily
-    - Full recompute cycle: every METRICS_RECOMPUTE_HOURS (default 6h)
-    - Position monitoring: every POSITION_MONITOR_MINUTES (default 15min)
-    - Cleanup tasks: daily
+    1. Position sweep: every POSITION_SNAPSHOT_MINUTES (default 60 min)
+    2. Position scoring: every POSITION_SCORING_MINUTES (after sweep)
+    3. Leaderboard refresh: daily
+    4. Cleanup: daily (expire blacklist, enforce retention)
 
     Args:
         nansen_client: Async Nansen API client
@@ -238,11 +298,11 @@ async def run_scheduler(
 
     # Track last run times
     last_leaderboard_refresh = None
-    last_recompute = None
-    last_position_monitor = None
+    last_position_sweep = None
+    last_scoring = None
     last_cleanup = None
 
-    # Run initial tasks
+    # --- Startup: run leaderboard refresh once ---
     try:
         logger.info("Running initial leaderboard refresh")
         await refresh_leaderboard(nansen_client, datastore)
@@ -250,22 +310,22 @@ async def run_scheduler(
     except Exception as e:
         logger.error(f"Initial leaderboard refresh failed: {e}")
 
+    # --- Startup: run initial position sweep + scoring ---
     try:
-        logger.info("Running initial recompute cycle")
-        await full_recompute_cycle(nansen_client, datastore, risk_config)
-        last_recompute = datetime.now(timezone.utc)
+        logger.info("Running initial position sweep")
+        await position_sweep(nansen_client, datastore)
+        last_position_sweep = datetime.now(timezone.utc)
     except Exception as e:
-        logger.error(f"Initial recompute cycle failed: {e}")
+        logger.error(f"Initial position sweep failed: {e}")
 
     try:
-        logger.info("Running initial position monitor")
-        liquidated = await monitor_positions(nansen_client, datastore)
-        if liquidated:
-            logger.warning(f"Detected {len(liquidated)} liquidated traders: {liquidated}")
-        last_position_monitor = datetime.now(timezone.utc)
+        logger.info("Running initial position scoring cycle")
+        await position_scoring_cycle(nansen_client, datastore, risk_config)
+        last_scoring = datetime.now(timezone.utc)
     except Exception as e:
-        logger.error(f"Initial position monitor failed: {e}")
+        logger.error(f"Initial position scoring cycle failed: {e}")
 
+    # --- Startup: run initial cleanup ---
     try:
         logger.info("Running initial cleanup tasks")
         datastore.cleanup_expired_blacklist()
@@ -274,7 +334,7 @@ async def run_scheduler(
     except Exception as e:
         logger.error(f"Initial cleanup failed: {e}")
 
-    # Main loop
+    # --- Main loop ---
     logger.info("Entering main scheduler loop")
 
     while True:
@@ -282,6 +342,26 @@ async def run_scheduler(
             await asyncio.sleep(60)  # Check every minute
 
             now = datetime.now(timezone.utc)
+
+            # Hourly position sweep + scoring
+            sweep_interval = timedelta(minutes=POSITION_SNAPSHOT_MINUTES)
+            if last_position_sweep is None or (now - last_position_sweep) >= sweep_interval:
+                logger.info(f"Triggering position sweep ({POSITION_SNAPSHOT_MINUTES}min interval)")
+                try:
+                    await position_sweep(nansen_client, datastore)
+                    last_position_sweep = now
+                except Exception as e:
+                    logger.error(f"Position sweep failed: {e}")
+
+                # Scoring runs after sweep
+                scoring_interval = timedelta(minutes=POSITION_SCORING_MINUTES)
+                if last_scoring is None or (now - last_scoring) >= scoring_interval:
+                    logger.info(f"Triggering position scoring ({POSITION_SCORING_MINUTES}min interval)")
+                    try:
+                        await position_scoring_cycle(nansen_client, datastore, risk_config)
+                        last_scoring = now
+                    except Exception as e:
+                        logger.error(f"Position scoring cycle failed: {e}")
 
             # Daily leaderboard refresh
             if last_leaderboard_refresh is None or (now - last_leaderboard_refresh) >= timedelta(days=1):
@@ -291,32 +371,6 @@ async def run_scheduler(
                     last_leaderboard_refresh = now
                 except Exception as e:
                     logger.error(f"Leaderboard refresh failed: {e}")
-
-            # Periodic recompute cycle
-            recompute_interval = timedelta(hours=METRICS_RECOMPUTE_HOURS)
-            if last_recompute is None or (now - last_recompute) >= recompute_interval:
-                logger.info(f"Triggering recompute cycle ({METRICS_RECOMPUTE_HOURS}h interval)")
-                try:
-                    await full_recompute_cycle(nansen_client, datastore, risk_config)
-                    last_recompute = now
-                except Exception as e:
-                    logger.error(f"Recompute cycle failed: {e}")
-
-            # Position monitoring
-            monitor_interval = timedelta(minutes=POSITION_MONITOR_MINUTES)
-            if last_position_monitor is None or (now - last_position_monitor) >= monitor_interval:
-                logger.debug(f"Triggering position monitor ({POSITION_MONITOR_MINUTES}min interval)")
-                try:
-                    liquidated = await monitor_positions(nansen_client, datastore)
-                    if liquidated:
-                        logger.warning(f"Detected {len(liquidated)} liquidated traders: {liquidated}")
-                        # Trigger immediate recompute if liquidations detected
-                        logger.info("Liquidations detected, triggering immediate recompute")
-                        await full_recompute_cycle(nansen_client, datastore, risk_config)
-                        last_recompute = now
-                    last_position_monitor = now
-                except Exception as e:
-                    logger.error(f"Position monitor failed: {e}")
 
             # Daily cleanup tasks
             if last_cleanup is None or (now - last_cleanup) >= timedelta(days=1):

@@ -76,8 +76,10 @@ REBALANCE_COOLDOWN_HOURS = 24
 # ---------------------------------------------------------------------------
 
 LEADERBOARD_REFRESH_CRON = "0 0 * * *"  # Daily midnight UTC
-METRICS_RECOMPUTE_HOURS = 6
-POSITION_MONITOR_MINUTES = 15
+LEADERBOARD_TOP_N = 100                  # Fetch top 100 traders (2 pages of 50)
+POSITION_SNAPSHOT_MINUTES = 60           # Hourly position sweep
+POSITION_SCORING_MINUTES = 60            # Hourly scoring (after sweep)
+METRICS_RECOMPUTE_HOURS = 6              # Legacy: used by trade-based metrics cache
 
 # ---------------------------------------------------------------------------
 # Nansen API rate limiting (per endpoint type)
