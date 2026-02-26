@@ -1,6 +1,6 @@
 import pytest
 from tests.conftest import make_metrics
-from src.filters import apply_anti_luck_filter, is_trader_eligible, blacklist_trader, is_fully_eligible
+from src.filters import apply_anti_luck_filter, is_trader_eligible, blacklist_trader, is_fully_eligible, is_position_eligible
 from src.datastore import DataStore
 from datetime import datetime, timedelta
 
@@ -68,3 +68,68 @@ def test_low_profit_factor_rejected():
     ok, reason = apply_anti_luck_filter(good_m7, m30, good_m90)
     assert ok is False
     assert "Profit factor" in reason
+
+
+# ---------------------------------------------------------------------------
+# Position-based eligibility tests
+# ---------------------------------------------------------------------------
+
+
+def test_position_eligible_passes(ds):
+    ds.upsert_trader("0xGOOD", label="Good Trader")
+    metrics = {
+        "account_growth": 0.05,
+        "avg_leverage": 5.0,
+        "snapshot_count": 48,
+    }
+    ok, reason = is_position_eligible("0xGOOD", metrics, ds)
+    assert ok is True
+
+
+def test_position_eligible_insufficient_snapshots(ds):
+    ds.upsert_trader("0xFEW", label="Few Snapshots")
+    metrics = {
+        "account_growth": 0.05,
+        "avg_leverage": 5.0,
+        "snapshot_count": 10,  # < 48 minimum
+    }
+    ok, reason = is_position_eligible("0xFEW", metrics, ds)
+    assert ok is False
+    assert "snapshots" in reason.lower()
+
+
+def test_position_eligible_negative_growth(ds):
+    ds.upsert_trader("0xLOSER", label="Loser")
+    metrics = {
+        "account_growth": -0.05,
+        "avg_leverage": 5.0,
+        "snapshot_count": 48,
+    }
+    ok, reason = is_position_eligible("0xLOSER", metrics, ds)
+    assert ok is False
+    assert "growth" in reason.lower()
+
+
+def test_position_eligible_high_leverage(ds):
+    ds.upsert_trader("0xDEGEN", label="Degen")
+    metrics = {
+        "account_growth": 0.05,
+        "avg_leverage": 30.0,  # > 25x
+        "snapshot_count": 48,
+    }
+    ok, reason = is_position_eligible("0xDEGEN", metrics, ds)
+    assert ok is False
+    assert "leverage" in reason.lower()
+
+
+def test_position_eligible_blacklisted(ds):
+    ds.upsert_trader("0xBLACK", label="Blacklisted")
+    ds.add_to_blacklist("0xBLACK", "test")
+    metrics = {
+        "account_growth": 0.10,
+        "avg_leverage": 3.0,
+        "snapshot_count": 100,
+    }
+    ok, reason = is_position_eligible("0xBLACK", metrics, ds)
+    assert ok is False
+    assert "blacklist" in reason.lower()

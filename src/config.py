@@ -100,3 +100,12 @@ NANSEN_RATE_LIMIT_TRADE_PER_SECOND: int = 1
 NANSEN_RATE_LIMIT_TRADE_PER_MINUTE: int = 9
 NANSEN_RATE_LIMIT_TRADE_MIN_INTERVAL: float = 7.0
 NANSEN_RATE_LIMIT_TRADE_STATE_FILE: str = "/tmp/pnl_weighted_rate_trade.json"
+
+# ---------------------------------------------------------------------------
+# Position-based filter gates (for scheduler)
+# ---------------------------------------------------------------------------
+
+POSITION_MIN_SNAPSHOTS = 48
+POSITION_MIN_GROWTH = 0.0
+POSITION_MAX_LEVERAGE = 25.0
+POSITION_MIN_ACCOUNT_VALUE = 1000.0
