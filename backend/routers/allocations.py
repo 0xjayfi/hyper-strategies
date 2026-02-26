@@ -20,6 +20,7 @@ from backend.schemas import (
     AllocationHistoryResponse,
     AllocationSnapshot,
     AllocationsResponse,
+    CapViolation,
     ConsensusToken,
     IndexPortfolioEntry,
     RiskCapStatus,
@@ -144,6 +145,47 @@ def _build_risk_caps(
     )
 
 
+def _detect_cap_violations(risk_caps: RiskCaps) -> list[CapViolation]:
+    """Check each risk cap dimension and return a list of violations.
+
+    A violation is flagged when ``current > max``.  Severity is "critical"
+    when the overshoot exceeds 20 percentage-points, otherwise "warning".
+    """
+    violations: list[CapViolation] = []
+
+    checks: list[tuple[str, RiskCapStatus, str]] = [
+        ("position_count", risk_caps.position_count, "Position count"),
+        ("max_token_exposure", risk_caps.max_token_exposure, "Max single-trader exposure"),
+        ("directional_long", risk_caps.directional_long, "Long directional exposure"),
+        ("directional_short", risk_caps.directional_short, "Short directional exposure"),
+    ]
+
+    for cap_name, status, label in checks:
+        if status.current > status.max:
+            overshoot = status.current - status.max
+            severity = "critical" if overshoot > 0.20 else "warning"
+            violations.append(
+                CapViolation(
+                    cap=cap_name,
+                    current=round(status.current, 4),
+                    limit=round(status.max, 4),
+                    severity=severity,
+                    message=(
+                        f"{label} ({status.current:.1%}) exceeds "
+                        f"cap ({status.max:.1%})"
+                    ),
+                )
+            )
+
+    if violations:
+        logger.warning(
+            "Risk cap violations detected: %s",
+            "; ".join(v.message for v in violations),
+        )
+
+    return violations
+
+
 # ---------------------------------------------------------------------------
 # GET /api/v1/allocations
 # ---------------------------------------------------------------------------
@@ -167,6 +209,7 @@ async def get_allocations(
         computed_at = datetime.now(timezone.utc).isoformat()
 
     risk_caps = _build_risk_caps(entries, ds=ds)
+    cap_violations = _detect_cap_violations(risk_caps)
 
     response = AllocationsResponse(
         allocations=[AllocationEntry(**e) for e in entries],
@@ -174,6 +217,7 @@ async def get_allocations(
         total_allocated_traders=len(entries),
         risk_caps=risk_caps,
         computed_at=computed_at,
+        cap_violations=cap_violations,
     )
 
     cache.set(cache_key, response, ttl=CACHE_TTL_ALLOCATIONS)

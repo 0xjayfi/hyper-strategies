@@ -392,6 +392,18 @@ class RiskCaps(BaseModel):
     directional_short: RiskCapStatus
 
 
+class CapViolation(BaseModel):
+    """A single risk cap violation flagged for advisory purposes."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    cap: str  # e.g. "directional_short", "max_token_exposure"
+    current: float
+    limit: float
+    severity: str  # "warning" or "critical"
+    message: str
+
+
 class AllocationsResponse(BaseModel):
     """Response envelope for the allocations endpoint."""
 
@@ -402,6 +414,7 @@ class AllocationsResponse(BaseModel):
     total_allocated_traders: int
     risk_caps: RiskCaps
     computed_at: str | None = None
+    cap_violations: list[CapViolation] = []
 
 
 class AllocationHistoryEntry(BaseModel):
