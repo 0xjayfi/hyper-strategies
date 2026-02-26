@@ -58,19 +58,16 @@ export function TraderLeaderboard() {
 
   const selectedTraderData = data?.traders.find((t) => t.address === selectedTrader);
 
-  // Build a score breakdown from trader data if available
-  // The radar chart expects individual score components; since the API returns a composite score,
-  // we derive a placeholder breakdown. When real breakdown data is available, this can be updated.
+  // Build score breakdown from real API data when available (DataStore path),
+  // fall back to approximations for the Nansen fallback path (score components are null).
   const scoreBreakdown = selectedTraderData?.score != null
     ? {
-        roi: selectedTraderData.roi_pct > 0 ? Math.min(selectedTraderData.roi_pct / 100, 1) : 0,
-        sharpe: selectedTraderData.score,
-        win_rate: selectedTraderData.win_rate ?? 0,
-        consistency: selectedTraderData.score,
-        smart_money: selectedTraderData.is_smart_money ? 1 : 0,
-        risk_mgmt: selectedTraderData.profit_factor != null
-          ? Math.min(selectedTraderData.profit_factor / 5, 1)
-          : 0,
+        roi: selectedTraderData.score_roi ?? selectedTraderData.score * 0.8,
+        sharpe: selectedTraderData.score_sharpe ?? selectedTraderData.score * 0.7,
+        win_rate: selectedTraderData.score_win_rate ?? selectedTraderData.score * 0.9,
+        consistency: selectedTraderData.score_consistency ?? selectedTraderData.score * 0.75,
+        smart_money: selectedTraderData.score_smart_money ?? 0,
+        risk_mgmt: selectedTraderData.score_risk_mgmt ?? selectedTraderData.score * 0.85,
       }
     : null;
 

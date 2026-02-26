@@ -76,6 +76,12 @@ def _build_datastore_leaderboard(
                 allocation_weight=allocations.get(address),
                 anti_luck_status=anti_luck,
                 is_blacklisted=datastore.is_blacklisted(address),
+                score_roi=score_data.get("normalized_roi"),
+                score_sharpe=score_data.get("normalized_sharpe"),
+                score_win_rate=score_data.get("normalized_win_rate"),
+                score_consistency=score_data.get("consistency_score"),
+                score_smart_money=score_data.get("smart_money_bonus"),
+                score_risk_mgmt=score_data.get("risk_management_score"),
             )
         )
 

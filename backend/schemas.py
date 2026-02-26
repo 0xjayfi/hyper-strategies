@@ -172,6 +172,14 @@ class LeaderboardTrader(BaseModel):
     is_blacklisted: bool = False
     is_smart_money: bool = False
 
+    # Score breakdown (available when from DataStore)
+    score_roi: float | None = None
+    score_sharpe: float | None = None
+    score_win_rate: float | None = None
+    score_consistency: float | None = None
+    score_smart_money: float | None = None
+    score_risk_mgmt: float | None = None
+
 
 class LeaderboardResponse(BaseModel):
     """Response envelope for the leaderboard endpoint."""

@@ -49,6 +49,14 @@ export interface LeaderboardTrader {
   is_smart_money: boolean;
   is_blacklisted: boolean;
   anti_luck_status: { passed: boolean; failures: string[] } | null;
+
+  // Score breakdown (available when source is datastore)
+  score_roi?: number | null;
+  score_sharpe?: number | null;
+  score_win_rate?: number | null;
+  score_consistency?: number | null;
+  score_smart_money?: number | null;
+  score_risk_mgmt?: number | null;
 }
 
 export interface MarketTokenOverview {
