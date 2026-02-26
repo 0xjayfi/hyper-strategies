@@ -10,7 +10,7 @@ export function useKeyboardShortcuts() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       switch (e.key) {
-        case '1': navigate('/'); break;
+        case '1': navigate('/market'); break;
         case '2': navigate('/positions'); break;
         case '3': navigate('/leaderboard'); break;
         case '4': navigate('/allocations'); break;

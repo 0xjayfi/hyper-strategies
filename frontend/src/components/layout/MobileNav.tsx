@@ -3,9 +3,10 @@ import { NavLink } from 'react-router';
 import { BarChart3, Table, Trophy, PieChart, ClipboardCheck, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useHealthCheck } from '../../api/hooks';
+import { NansenIcon } from '../icons/NansenIcon';
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Market Overview', icon: BarChart3 },
+  { to: '/market', label: 'Market Overview', icon: BarChart3 },
   { to: '/positions', label: 'Position Explorer', icon: Table },
   { to: '/leaderboard', label: 'Leaderboard', icon: Trophy },
   { to: '/allocations', label: 'Allocations', icon: PieChart },
@@ -41,7 +42,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
         {/* Header */}
         <div className="flex h-14 items-center justify-between border-b border-border px-4">
           <div className="flex items-center gap-2">
-            <BarChart3 className="h-5 w-5 text-accent" />
+            <NansenIcon className="h-5 w-5 text-[#00FFA7]" />
             <span className="text-sm font-semibold text-text-primary">Hyper Signals</span>
           </div>
           <button
@@ -59,7 +60,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
             <NavLink
               key={to}
               to={to}
-              end={to === '/'}
+              end
               onClick={onClose}
               className={({ isActive }) =>
                 cn(

@@ -42,17 +42,7 @@ export function MarketOverview() {
   return (
     <PageLayout
       title="Market Overview"
-      description={`Live snapshot of 4 tokens (BTC, ETH, SOL, HYPE) with smart money consensus and aggregate flow data.
-
-Data source: Live Nansen API (no database).
-Endpoint: GET /api/v1/market-overview → backend/routers/market.py
-
-How it works:
-1. Backend fires concurrent Nansen requests per token — smart money positions, all-trader positions, and perp screener (funding, OI, volume).
-2. Aggregates per-token stats: L/S ratio, total position value, top trader by size, funding rate.
-3. Computes smart money consensus per token (direction + confidence %) and aggregate smart money flow across all tokens.
-
-Auto-refresh: every 5 minutes.`}
+      description="Live snapshot of smart money activity across BTC, ETH, SOL, and HYPE. See which direction the smart money is leaning, with consensus signals and aggregate flow data. Auto-refreshes every 5 minutes."
       lastUpdated={lastUpdated}
       onRefresh={() => refetch()}
       isRefreshing={isFetching}
