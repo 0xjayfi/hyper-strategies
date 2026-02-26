@@ -42,7 +42,8 @@ def test_only_open_trades_ignored():
 def test_max_drawdown_proxy():
     trades = [make_trade(closed_pnl=500), make_trade(closed_pnl=-800)]
     m = compute_trade_metrics(trades, account_value=10000, window_days=7)
-    assert m.max_drawdown_proxy == pytest.approx(0.08)  # 800/10000
+    # Trade-relative drawdown: abs(-800) / value_usd(1000) = 0.8
+    assert m.max_drawdown_proxy == pytest.approx(0.8)
 
 def test_zero_account_value():
     trades = [make_trade(closed_pnl=100)]

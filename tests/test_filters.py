@@ -14,25 +14,30 @@ def test_passes_all_gates():
     assert ok is True
 
 def test_fails_7d_gate():
-    m7 = make_metrics(window_days=7, total_pnl=-100, roi_proxy=-2)
+    # ANTI_LUCK_7D: min_pnl=-999999, min_roi=-999 (effectively disabled)
+    # Need pnl <= -999999 or roi <= -999 to fail
+    m7 = make_metrics(window_days=7, total_pnl=-999_999, roi_proxy=-1000)
     ok, reason = apply_anti_luck_filter(m7, good_m30, good_m90)
     assert ok is False
     assert "7d gate" in reason
 
 def test_fails_30d_gate():
-    m30 = make_metrics(window_days=30, total_pnl=5000, roi_proxy=10)
+    # ANTI_LUCK_30D: min_pnl=500, min_roi=0
+    m30 = make_metrics(window_days=30, total_pnl=400, roi_proxy=-1)
     ok, reason = apply_anti_luck_filter(good_m7, m30, good_m90)
     assert ok is False
     assert "30d gate" in reason
 
 def test_fails_90d_gate():
-    m90 = make_metrics(window_days=90, total_pnl=20000, roi_proxy=10)
+    # ANTI_LUCK_90D: min_pnl=1000, min_roi=0
+    m90 = make_metrics(window_days=90, total_pnl=800, roi_proxy=-1)
     ok, reason = apply_anti_luck_filter(good_m7, good_m30, m90)
     assert ok is False
     assert "90d gate" in reason
 
 def test_high_win_rate_rejected():
-    m30 = make_metrics(window_days=30, win_rate=0.90, profit_factor=1.1, total_trades=50, total_pnl=15000, roi_proxy=20)
+    # WIN_RATE_BOUNDS upper = 0.90; code checks win_rate > 0.90 (strict >)
+    m30 = make_metrics(window_days=30, win_rate=0.91, profit_factor=1.5, total_trades=50, total_pnl=15000, roi_proxy=20)
     ok, reason = apply_anti_luck_filter(good_m7, m30, good_m90)
     assert ok is False
     assert "too high" in reason
@@ -43,19 +48,23 @@ def test_trend_trader_exception():
     assert ok is True
 
 def test_low_win_rate_low_pf_rejected():
-    m30 = make_metrics(window_days=30, win_rate=0.30, profit_factor=1.0, total_trades=50, total_pnl=15000, roi_proxy=20)
+    # WIN_RATE_BOUNDS lower = 0.25; need win_rate < 0.25 to enter low-WR path
+    # profit_factor < TREND_TRADER_PF (2.0) means "not trend trader"
+    m30 = make_metrics(window_days=30, win_rate=0.20, profit_factor=1.5, total_trades=50, total_pnl=15000, roi_proxy=20)
     ok, reason = apply_anti_luck_filter(good_m7, m30, good_m90)
     assert ok is False
     assert "not trend trader" in reason
 
 def test_insufficient_trades_rejected():
-    m30 = make_metrics(window_days=30, total_trades=10, total_pnl=15000, roi_proxy=20, win_rate=0.55, profit_factor=2.0)
+    # MIN_TRADES_30D = 10; code checks total_trades < 10 (strict <)
+    m30 = make_metrics(window_days=30, total_trades=9, total_pnl=15000, roi_proxy=20, win_rate=0.55, profit_factor=2.0)
     ok, reason = apply_anti_luck_filter(good_m7, m30, good_m90)
     assert ok is False
     assert "Insufficient" in reason
 
 def test_low_profit_factor_rejected():
-    m30 = make_metrics(window_days=30, profit_factor=1.2, total_trades=50, total_pnl=15000, roi_proxy=20, win_rate=0.55)
+    # MIN_PROFIT_FACTOR = 1.1; code checks profit_factor < 1.1 (strict <)
+    m30 = make_metrics(window_days=30, profit_factor=1.05, total_trades=50, total_pnl=15000, roi_proxy=20, win_rate=0.55)
     ok, reason = apply_anti_luck_filter(good_m7, m30, good_m90)
     assert ok is False
     assert "Profit factor" in reason

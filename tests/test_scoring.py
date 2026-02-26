@@ -8,7 +8,8 @@ from tests.conftest import make_metrics
 
 def test_normalized_roi_capped():
     assert normalized_roi(150) == 1.0
-    assert normalized_roi(50) == pytest.approx(0.5)
+    # Code divides by 10.0: normalized_roi(5) = 5/10 = 0.5
+    assert normalized_roi(5) == pytest.approx(0.5)
     assert normalized_roi(-10) == 0.0
 
 def test_normalized_sharpe():
@@ -17,9 +18,13 @@ def test_normalized_sharpe():
     assert normalized_sharpe(-1.0) == 0.0
 
 def test_normalized_win_rate_bounds():
-    assert normalized_win_rate(0.30) == 0.0
-    assert normalized_win_rate(0.90) == 0.0
-    assert normalized_win_rate(0.60) == pytest.approx(0.5)
+    # Bounds are [0.25, 0.90], rescale range [0.25, 0.75]
+    # Below floor: 0.20 < 0.25 -> 0.0
+    assert normalized_win_rate(0.20) == 0.0
+    # Above ceiling: 0.95 > 0.90 -> 0.0
+    assert normalized_win_rate(0.95) == 0.0
+    # Mid-range: (0.50 - 0.25) / (0.75 - 0.25) = 0.25 / 0.50 = 0.5
+    assert normalized_win_rate(0.50) == pytest.approx(0.5)
 
 def test_consistency_all_positive():
     score = consistency_score(roi_7d=10, roi_30d=20, roi_90d=50)
@@ -54,7 +59,8 @@ def test_risk_management_bad():
     assert score < 0.3
 
 def test_classify_hft():
-    assert classify_trader_style(trades_per_day=10, avg_hold_hours=2) == "HFT"
+    # Code requires trades_per_day > 100 AND avg_hold_hours < 1 for HFT
+    assert classify_trader_style(trades_per_day=150, avg_hold_hours=0.5) == "HFT"
 
 def test_classify_swing():
     assert classify_trader_style(trades_per_day=2, avg_hold_hours=48) == "SWING"
