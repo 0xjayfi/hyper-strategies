@@ -140,14 +140,17 @@ async def get_leaderboard(
             for i, entry in enumerate(raw[:limit], start=1):
                 pnl = entry.pnl_usd_total or 0.0
                 roi = entry.roi_percent_total or 0.0
+                label = entry.trader_address_label
+                smart = bool(label and "smart money" in label.lower())
                 traders.append(
                     LeaderboardTrader(
                         rank=i,
                         address=entry.trader_address,
-                        label=entry.trader_address_label,
+                        label=label,
                         pnl_usd=pnl,
                         roi_pct=roi,
                         num_trades=entry.nof_trades or 0,
+                        is_smart_money=smart,
                     )
                 )
         else:
@@ -158,14 +161,17 @@ async def get_leaderboard(
             )
             traders = []
             for i, entry in enumerate(raw[:limit], start=1):
+                label = entry.trader_address_label
+                smart = bool(label and "smart money" in label.lower())
                 traders.append(
                     LeaderboardTrader(
                         rank=i,
                         address=entry.trader_address,
-                        label=entry.trader_address_label,
+                        label=label,
                         pnl_usd=entry.total_pnl,
                         roi_pct=entry.roi,
                         num_trades=0,
+                        is_smart_money=smart,
                     )
                 )
 

@@ -1,12 +1,12 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from src.models import Trade, TradeMetrics
 from src.datastore import DataStore
 
 def make_trade(closed_pnl=100.0, value_usd=1000.0, action="Close", **overrides):
     defaults = dict(
         action=action, closed_pnl=closed_pnl, price=50000.0, side="Long",
-        size=0.1, timestamp=datetime.utcnow().isoformat(),
+        size=0.1, timestamp=datetime.now(timezone.utc).isoformat(),
         token_symbol="BTC", value_usd=value_usd, fee_usd=1.0, start_position=0.0,
     )
     defaults.update(overrides)

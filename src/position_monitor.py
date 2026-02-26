@@ -6,7 +6,7 @@ If a position disappears without a Close/Reduce trade, the trader is blacklisted
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.models import AssetPosition, PositionSnapshot
 from src.nansen_client import NansenClient
@@ -108,13 +108,13 @@ async def detect_liquidations(
             # Fetch recent trades to check for Close actions
             recent_trades = await nansen_client.fetch_address_trades(
                 address,
-                date_from=(datetime.utcnow() - timedelta(hours=1)).strftime("%Y-%m-%d"),
-                date_to=datetime.utcnow().strftime("%Y-%m-%d"),
+                date_from=(datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%d"),
+                date_to=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             )
             recent_close_tokens = {
                 t.token_symbol
                 for t in recent_trades
-                if t.action in ("Close", "Reduce")
+                if t.closed_pnl != 0
             }
 
             for prev_pos in prev_positions:

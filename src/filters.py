@@ -8,7 +8,7 @@ filters run *before* a trader enters the allocation set.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.models import TradeMetrics
 from src.datastore import DataStore
@@ -103,7 +103,7 @@ def is_trader_eligible(address: str, datastore: DataStore) -> tuple[bool, str]:
 
 def blacklist_trader(address: str, reason: str, datastore: DataStore) -> None:
     """Add a trader to the blacklist with the configured cooldown period."""
-    expires = (datetime.utcnow() + timedelta(days=LIQUIDATION_COOLDOWN_DAYS)).isoformat()
+    expires = (datetime.now(timezone.utc) + timedelta(days=LIQUIDATION_COOLDOWN_DAYS)).isoformat()
     datastore.add_to_blacklist(address, reason, expires)
     logger.info("Blacklisted %s for %d days: %s", address, LIQUIDATION_COOLDOWN_DAYS, reason)
 

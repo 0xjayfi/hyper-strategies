@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from src.models import TradeMetrics
@@ -203,7 +203,7 @@ class DataStore:
         """
         existing = self.get_trader(address)
         if existing is None:
-            first_seen = datetime.utcnow().strftime("%Y-%m-%d")
+            first_seen = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             self._conn.execute(
                 """
                 INSERT INTO traders (address, label, first_seen, is_active, style, notes)
@@ -260,7 +260,7 @@ class DataStore:
         account_value: float,
     ) -> None:
         """Insert a leaderboard snapshot row with ``captured_at`` set to now."""
-        captured_at = datetime.utcnow().isoformat()
+        captured_at = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
             """
             INSERT INTO leaderboard_snapshots
@@ -280,7 +280,7 @@ class DataStore:
 
         ``computed_at`` is set automatically to the current UTC time.
         """
-        computed_at = datetime.utcnow().isoformat()
+        computed_at = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
             """
             INSERT INTO trade_metrics
@@ -382,7 +382,7 @@ class DataStore:
 
         *score_data* must contain keys matching the score column names.
         """
-        computed_at = datetime.utcnow().isoformat()
+        computed_at = datetime.now(timezone.utc).isoformat()
         values = [address, computed_at] + [
             score_data[f] for f in self._SCORE_FIELDS
         ]
@@ -459,7 +459,7 @@ class DataStore:
         available.  All rows share the same ``computed_at`` timestamp and
         are written inside a single transaction.
         """
-        computed_at = datetime.utcnow().isoformat()
+        computed_at = datetime.now(timezone.utc).isoformat()
         with self._conn:
             self._conn.executemany(
                 """
@@ -505,9 +505,9 @@ class DataStore:
         If *expires_at* is ``None`` a default expiry of 14 days from now
         is used.  ``blacklisted_at`` is set automatically.
         """
-        blacklisted_at = datetime.utcnow().isoformat()
+        blacklisted_at = datetime.now(timezone.utc).isoformat()
         if expires_at is None:
-            expires_at = (datetime.utcnow() + timedelta(days=14)).isoformat()
+            expires_at = (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
         self._conn.execute(
             """
             INSERT INTO blacklist (address, reason, blacklisted_at, expires_at)
@@ -519,7 +519,7 @@ class DataStore:
 
     def is_blacklisted(self, address: str) -> bool:
         """Return ``True`` if the address has an active (non-expired) blacklist entry."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         row = self._conn.execute(
             """
             SELECT 1 FROM blacklist
@@ -532,7 +532,7 @@ class DataStore:
 
     def get_blacklist_entry(self, address: str) -> Optional[dict]:
         """Return the most recent *active* blacklist entry as a dict, or ``None``."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         row = self._conn.execute(
             """
             SELECT * FROM blacklist
@@ -560,7 +560,7 @@ class DataStore:
 
         ``captured_at`` is set automatically and shared across all rows.
         """
-        captured_at = datetime.utcnow().isoformat()
+        captured_at = datetime.now(timezone.utc).isoformat()
         with self._conn:
             self._conn.executemany(
                 """
@@ -622,7 +622,7 @@ class DataStore:
         Used by liquidation detection to compare current vs. recent
         positions.
         """
-        cutoff = (datetime.utcnow() - timedelta(hours=lookback_hours)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
         rows = self._conn.execute(
             """
             SELECT * FROM position_snapshots
@@ -661,7 +661,7 @@ class DataStore:
 
     def cleanup_expired_blacklist(self) -> None:
         """Delete all blacklist entries whose ``expires_at`` is in the past."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         self._conn.execute("DELETE FROM blacklist WHERE expires_at < ?", (now,))
         self._conn.commit()
 
@@ -676,7 +676,7 @@ class DataStore:
         * ``allocations`` -- ``computed_at``
         * ``position_snapshots`` -- ``captured_at``
         """
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         with self._conn:
             self._conn.execute(
                 "DELETE FROM leaderboard_snapshots WHERE captured_at < ?", (cutoff,)

@@ -7,7 +7,7 @@ empty database.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -64,17 +64,17 @@ def make_score_data(**overrides) -> dict:
 
 def _iso_now() -> str:
     """Return the current UTC time as an ISO-8601 string."""
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _iso_future(days: int = 30) -> str:
     """Return a future ISO-8601 datetime string."""
-    return (datetime.utcnow() + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
+    return (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _iso_past(days: int = 1) -> str:
     """Return a past ISO-8601 datetime string."""
-    return (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
+    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _make_position(token_symbol="BTC", side="Long", **overrides):
@@ -503,7 +503,7 @@ class TestBlacklist:
         assert entry is not None
 
         expires = datetime.fromisoformat(entry["expires_at"])
-        expected = datetime.utcnow() + timedelta(days=14)
+        expected = datetime.now(timezone.utc) + timedelta(days=14)
 
         # Allow 60 seconds of slack for test execution time
         delta = abs((expires - expected).total_seconds())
@@ -581,11 +581,11 @@ class TestPositionSnapshots:
         ds.upsert_trader("0xPS3")
 
         # Insert a snapshot from 2 hours ago
-        recent_time = (datetime.utcnow() - timedelta(hours=2)).strftime(
+        recent_time = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime(
             "%Y-%m-%dT%H:%M:%S"
         )
         # Insert a snapshot from 48 hours ago
-        old_time = (datetime.utcnow() - timedelta(hours=48)).strftime(
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime(
             "%Y-%m-%dT%H:%M:%S"
         )
 

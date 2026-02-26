@@ -49,7 +49,7 @@ def compute_trade_metrics(trades: list[Trade], account_value: float, window_days
 
     gross_profit = sum(t.closed_pnl for t in winning)
     gross_loss = abs(sum(t.closed_pnl for t in losing))
-    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else 999.0
 
     # Per-trade returns as fraction of trade value
     returns = []
@@ -181,8 +181,8 @@ async def recompute_all_metrics(
         for window_days in windows:
             logger.debug(f"  Window: {window_days} days")
 
-            date_to = datetime.utcnow().strftime("%Y-%m-%d")
-            date_from = (datetime.utcnow() - timedelta(days=window_days)).strftime("%Y-%m-%d")
+            date_to = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            date_from = (datetime.now(timezone.utc) - timedelta(days=window_days)).strftime("%Y-%m-%d")
 
             try:
                 # Fetch trades for this window (newest first so page cap gets recent trades)
