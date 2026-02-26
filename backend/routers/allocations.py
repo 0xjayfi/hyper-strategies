@@ -81,7 +81,8 @@ def _build_allocations_from_db(ds: DataStore) -> tuple[list[dict], str | None]:
         for e in entries:
             e["weight"] = e["weight"] / total
 
-    return entries, None  # computed_at not exposed by get_latest_allocations
+    computed_at = ds.get_latest_allocation_timestamp()
+    return entries, computed_at
 
 
 def _build_risk_caps(

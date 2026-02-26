@@ -82,6 +82,7 @@ def mock_datastore():
     ds.is_blacklisted.return_value = False
     ds.get_latest_position_snapshot.return_value = []
     ds.get_last_trade_time.return_value = None
+    ds.get_latest_allocation_timestamp.return_value = None
     return ds
 
 
@@ -238,6 +239,9 @@ class TestAllocationsEndpoint:
             ADDR_B: 0.4,
         }
         mock_datastore.get_latest_scores.return_value = {}
+        mock_datastore.get_latest_allocation_timestamp.return_value = (
+            "2026-02-26T12:00:00+00:00"
+        )
 
         resp = await client.get("/api/v1/allocations")
         assert resp.status_code == 200
@@ -247,6 +251,7 @@ class TestAllocationsEndpoint:
         assert len(body["allocations"]) == 2
         assert "softmax_temperature" in body
         assert "risk_caps" in body
+        assert body["computed_at"] == "2026-02-26T12:00:00+00:00"
 
         # Verify weights are present and sum close to 1.0
         weights = [a["weight"] for a in body["allocations"]]
@@ -272,6 +277,9 @@ class TestAllocationsEndpoint:
         """Verify full response shape matches AllocationsResponse schema."""
         mock_datastore.get_latest_allocations.return_value = {ADDR_A: 1.0}
         mock_datastore.get_latest_scores.return_value = {}
+        mock_datastore.get_latest_allocation_timestamp.return_value = (
+            "2026-02-26T12:00:00+00:00"
+        )
 
         resp = await client.get("/api/v1/allocations")
         assert resp.status_code == 200
