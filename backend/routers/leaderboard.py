@@ -76,6 +76,14 @@ def _build_datastore_leaderboard(
                 allocation_weight=allocations.get(address),
                 anti_luck_status=anti_luck,
                 is_blacklisted=datastore.is_blacklisted(address),
+                # Position-based scoring field mapping (DB key → API field):
+                #   normalized_roi ← account_growth_score
+                #   normalized_sharpe ← drawdown_score
+                #   normalized_win_rate ← leverage_score
+                #   consistency_score ← consistency_score (unchanged)
+                #   smart_money_bonus ← smart_money_bonus (unchanged)
+                #   risk_management_score ← avg(liquidation_distance, diversity)
+                # Field names kept as-is for frontend compatibility.
                 score_roi=score_data.get("normalized_roi"),
                 score_sharpe=score_data.get("normalized_sharpe"),
                 score_win_rate=score_data.get("normalized_win_rate"),
@@ -104,7 +112,7 @@ def _build_datastore_leaderboard(
 async def get_leaderboard(
     token: TokenEnum | None = None,
     timeframe: TimeframeEnum = TimeframeEnum.d30,
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=100, ge=1, le=200),
     sort_by: str = Query(default="score"),
     nansen_client: NansenClient = Depends(get_nansen_client),
     datastore: DataStore = Depends(get_datastore),
