@@ -89,8 +89,14 @@ NANSEN_RATE_LIMIT_LEADERBOARD_PER_MINUTE: int = 300
 NANSEN_RATE_LIMIT_LEADERBOARD_MIN_INTERVAL: float = 0.0
 NANSEN_RATE_LIMIT_LEADERBOARD_STATE_FILE: str = "/tmp/pnl_weighted_rate_leaderboard.json"
 
-# Profiler endpoints (perp-trades, perp-positions) — fast responses, 429 risk
-NANSEN_RATE_LIMIT_PROFILER_PER_SECOND: int = 1
-NANSEN_RATE_LIMIT_PROFILER_PER_MINUTE: int = 9
-NANSEN_RATE_LIMIT_PROFILER_MIN_INTERVAL: float = 7.0
-NANSEN_RATE_LIMIT_PROFILER_STATE_FILE: str = "/tmp/pnl_weighted_rate_profiler.json"
+# Position endpoints (profiler/perp-positions) — fast, less rate-limited
+NANSEN_RATE_LIMIT_POSITION_PER_SECOND: int = 5
+NANSEN_RATE_LIMIT_POSITION_PER_MINUTE: int = 100
+NANSEN_RATE_LIMIT_POSITION_MIN_INTERVAL: float = 0.0
+NANSEN_RATE_LIMIT_POSITION_STATE_FILE: str = "/tmp/pnl_weighted_rate_position.json"
+
+# Trade endpoints (profiler/perp-trades) — strict throttling, 429 risk
+NANSEN_RATE_LIMIT_TRADE_PER_SECOND: int = 1
+NANSEN_RATE_LIMIT_TRADE_PER_MINUTE: int = 9
+NANSEN_RATE_LIMIT_TRADE_MIN_INTERVAL: float = 7.0
+NANSEN_RATE_LIMIT_TRADE_STATE_FILE: str = "/tmp/pnl_weighted_rate_trade.json"

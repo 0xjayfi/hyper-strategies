@@ -30,10 +30,14 @@ from src.config import (
     NANSEN_RATE_LIMIT_LEADERBOARD_PER_MINUTE,
     NANSEN_RATE_LIMIT_LEADERBOARD_PER_SECOND,
     NANSEN_RATE_LIMIT_LEADERBOARD_STATE_FILE,
-    NANSEN_RATE_LIMIT_PROFILER_MIN_INTERVAL,
-    NANSEN_RATE_LIMIT_PROFILER_PER_MINUTE,
-    NANSEN_RATE_LIMIT_PROFILER_PER_SECOND,
-    NANSEN_RATE_LIMIT_PROFILER_STATE_FILE,
+    NANSEN_RATE_LIMIT_POSITION_MIN_INTERVAL,
+    NANSEN_RATE_LIMIT_POSITION_PER_MINUTE,
+    NANSEN_RATE_LIMIT_POSITION_PER_SECOND,
+    NANSEN_RATE_LIMIT_POSITION_STATE_FILE,
+    NANSEN_RATE_LIMIT_TRADE_MIN_INTERVAL,
+    NANSEN_RATE_LIMIT_TRADE_PER_MINUTE,
+    NANSEN_RATE_LIMIT_TRADE_PER_SECOND,
+    NANSEN_RATE_LIMIT_TRADE_STATE_FILE,
 )
 from src.models import (
     AssetPosition,
@@ -281,9 +285,9 @@ class _RateLimiter:
 class NansenClient:
     """Async wrapper around the Nansen Hyperliquid API endpoints.
 
-    Uses **two separate rate limiters** — one for leaderboard endpoints (fast,
-    no throttling needed) and one for profiler endpoints (trades/positions —
-    fast server responses trigger 429s, needs strict throttling).
+    Uses **three separate rate limiters** — one for leaderboard endpoints (fast,
+    no throttling needed), one for position endpoints (lenient), and one for
+    trade endpoints (strict throttling, 429 risk).
 
     Parameters
     ----------
@@ -325,12 +329,20 @@ class NansenClient:
             min_interval=NANSEN_RATE_LIMIT_LEADERBOARD_MIN_INTERVAL,
         )
 
-        # Profiler (perp-trades, perp-positions) — fast responses, 429 risk
-        self._profiler_limiter = _RateLimiter(
-            per_second=NANSEN_RATE_LIMIT_PROFILER_PER_SECOND,
-            per_minute=NANSEN_RATE_LIMIT_PROFILER_PER_MINUTE,
-            state_file=NANSEN_RATE_LIMIT_PROFILER_STATE_FILE,
-            min_interval=NANSEN_RATE_LIMIT_PROFILER_MIN_INTERVAL,
+        # Position (profiler/perp-positions) — lenient
+        self._position_limiter = _RateLimiter(
+            per_second=NANSEN_RATE_LIMIT_POSITION_PER_SECOND,
+            per_minute=NANSEN_RATE_LIMIT_POSITION_PER_MINUTE,
+            state_file=NANSEN_RATE_LIMIT_POSITION_STATE_FILE,
+            min_interval=NANSEN_RATE_LIMIT_POSITION_MIN_INTERVAL,
+        )
+
+        # Trade (profiler/perp-trades) — strict
+        self._trade_limiter = _RateLimiter(
+            per_second=NANSEN_RATE_LIMIT_TRADE_PER_SECOND,
+            per_minute=NANSEN_RATE_LIMIT_TRADE_PER_MINUTE,
+            state_file=NANSEN_RATE_LIMIT_TRADE_STATE_FILE,
+            min_interval=NANSEN_RATE_LIMIT_TRADE_MIN_INTERVAL,
         )
 
     # ------------------------------------------------------------------
@@ -397,11 +409,12 @@ class NansenClient:
             )
 
             # Route to the correct limiter based on endpoint.
-            limiter = (
-                self._profiler_limiter
-                if "/profiler/" in endpoint
-                else self._leaderboard_limiter
-            )
+            if "/profiler/perp-positions" in endpoint:
+                limiter = self._position_limiter
+            elif "/profiler/" in endpoint:
+                limiter = self._trade_limiter
+            else:
+                limiter = self._leaderboard_limiter
 
             try:
                 await limiter.acquire()
