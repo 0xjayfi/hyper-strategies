@@ -481,3 +481,94 @@ class TestRateLimiterZeroMinInterval:
             await limiter.acquire()
 
         mock_sleep.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# NansenClient — limiter routing (position vs trade vs leaderboard)
+# ---------------------------------------------------------------------------
+
+
+class TestLimiterRouting:
+    """Verify that NansenClient routes endpoints to the correct rate limiter."""
+
+    def _make_client(self) -> "NansenClient":
+        """Create a NansenClient with a fake API key (no real HTTP calls)."""
+        from src.nansen_client import NansenClient
+
+        return NansenClient(api_key="test-key", base_url="https://fake.nansen.ai")
+
+    @pytest.mark.asyncio
+    async def test_position_endpoint_uses_position_limiter(self) -> None:
+        """perp-positions endpoint should use the position limiter (lenient)."""
+        client = self._make_client()
+
+        # Mock the HTTP post to return a valid response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": {"positions": [], "account_value": 0}}
+        client._client.post = AsyncMock(return_value=mock_response)
+
+        # Spy on the position limiter's acquire method
+        client._position_limiter.acquire = AsyncMock()
+        client._trade_limiter.acquire = AsyncMock()
+        client._leaderboard_limiter.acquire = AsyncMock()
+
+        await client._request("/api/v1/profiler/perp-positions", {"address": "0xabc"})
+
+        client._position_limiter.acquire.assert_awaited_once()
+        client._trade_limiter.acquire.assert_not_awaited()
+        client._leaderboard_limiter.acquire.assert_not_awaited()
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_trade_endpoint_uses_trade_limiter(self) -> None:
+        """perp-trades endpoint should use the trade limiter (strict)."""
+        client = self._make_client()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": []}
+        client._client.post = AsyncMock(return_value=mock_response)
+
+        client._position_limiter.acquire = AsyncMock()
+        client._trade_limiter.acquire = AsyncMock()
+        client._leaderboard_limiter.acquire = AsyncMock()
+
+        await client._request("/api/v1/profiler/perp-trades", {"address": "0xabc"})
+
+        client._trade_limiter.acquire.assert_awaited_once()
+        client._position_limiter.acquire.assert_not_awaited()
+        client._leaderboard_limiter.acquire.assert_not_awaited()
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_leaderboard_endpoint_uses_leaderboard_limiter(self) -> None:
+        """Leaderboard endpoint should use the leaderboard limiter."""
+        client = self._make_client()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": []}
+        client._client.post = AsyncMock(return_value=mock_response)
+
+        client._position_limiter.acquire = AsyncMock()
+        client._trade_limiter.acquire = AsyncMock()
+        client._leaderboard_limiter.acquire = AsyncMock()
+
+        await client._request("/api/v1/perp-leaderboard", {})
+
+        client._leaderboard_limiter.acquire.assert_awaited_once()
+        client._position_limiter.acquire.assert_not_awaited()
+        client._trade_limiter.acquire.assert_not_awaited()
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_client_has_three_limiters(self) -> None:
+        """NansenClient should have position, trade, and leaderboard limiters."""
+        client = self._make_client()
+
+        assert hasattr(client, "_position_limiter")
+        assert hasattr(client, "_trade_limiter")
+        assert hasattr(client, "_leaderboard_limiter")
+        assert not hasattr(client, "_profiler_limiter")
+        await client.close()
