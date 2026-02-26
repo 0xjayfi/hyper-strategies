@@ -79,7 +79,7 @@ LEADERBOARD_REFRESH_CRON = "0 0 * * *"  # Daily midnight UTC
 LEADERBOARD_TOP_N = 100                  # Fetch top 100 traders (2 pages of 50)
 POSITION_SNAPSHOT_MINUTES = 60           # Hourly position sweep
 POSITION_SCORING_MINUTES = 60            # Hourly scoring (after sweep)
-METRICS_RECOMPUTE_HOURS = 6              # Legacy: used by trade-based metrics cache
+METRICS_RECOMPUTE_HOURS = 6              # Legacy: used by trade-based metrics (assess page)
 
 # ---------------------------------------------------------------------------
 # Nansen API rate limiting (per endpoint type)
@@ -110,4 +110,3 @@ NANSEN_RATE_LIMIT_TRADE_STATE_FILE: str = "/tmp/pnl_weighted_rate_trade.json"
 POSITION_MIN_SNAPSHOTS = 48
 POSITION_MIN_GROWTH = 0.0
 POSITION_MAX_LEVERAGE = 25.0
-POSITION_MIN_ACCOUNT_VALUE = 1000.0

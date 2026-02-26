@@ -142,11 +142,11 @@ def is_fully_eligible(
 # Position-based eligibility (for scheduler scoring pipeline)
 # ---------------------------------------------------------------------------
 
-# Thresholds
-MIN_SNAPSHOTS_30D = 48          # ~2 days of hourly snapshots
-MIN_ACCOUNT_GROWTH = 0.0        # Must be profitable
-MAX_AVG_LEVERAGE = 25.0         # No degenerate leverage
-MIN_ACCOUNT_VALUE = 1000.0      # Filter dust accounts
+from src.config import (
+    POSITION_MIN_SNAPSHOTS,
+    POSITION_MIN_GROWTH,
+    POSITION_MAX_LEVERAGE,
+)
 
 
 def is_position_eligible(
@@ -164,15 +164,15 @@ def is_position_eligible(
         return False, reason
 
     snapshots = position_metrics.get("snapshot_count", 0)
-    if snapshots < MIN_SNAPSHOTS_30D:
-        return False, f"Insufficient snapshots: {snapshots} < {MIN_SNAPSHOTS_30D}"
+    if snapshots < POSITION_MIN_SNAPSHOTS:
+        return False, f"Insufficient snapshots: {snapshots} < {POSITION_MIN_SNAPSHOTS}"
 
     growth = position_metrics.get("account_growth", 0.0)
-    if growth <= MIN_ACCOUNT_GROWTH:
+    if growth <= POSITION_MIN_GROWTH:
         return False, f"Negative account growth: {growth:.2%}"
 
     leverage = position_metrics.get("avg_leverage", 0.0)
-    if leverage > MAX_AVG_LEVERAGE:
-        return False, f"Excessive leverage: {leverage:.1f}x > {MAX_AVG_LEVERAGE}x"
+    if leverage > POSITION_MAX_LEVERAGE:
+        return False, f"Excessive leverage: {leverage:.1f}x > {POSITION_MAX_LEVERAGE}x"
 
     return True, "eligible"
