@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { MobileNav } from './MobileNav';
@@ -16,6 +16,14 @@ interface PageLayoutProps {
 export function PageLayout({ title, description, lastUpdated, onRefresh, isRefreshing, children }: PageLayoutProps) {
   const [showDesc, setShowDesc] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Listen for keyboard 'r' refresh shortcut dispatched by useKeyboardShortcuts
+  useEffect(() => {
+    if (!onRefresh) return;
+    const handler = () => onRefresh();
+    window.addEventListener('hyper-refresh', handler);
+    return () => window.removeEventListener('hyper-refresh', handler);
+  }, [onRefresh]);
 
   return (
     <div className="flex h-screen overflow-hidden">
