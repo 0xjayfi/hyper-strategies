@@ -541,6 +541,18 @@ class DataStore:
         ).fetchall()
         return {r["address"]: r["final_weight"] for r in rows}
 
+    def get_latest_allocation_timestamp(self) -> str | None:
+        """Return the ``computed_at`` timestamp of the most recent allocation batch.
+
+        Returns ``None`` when the allocations table is empty.
+        """
+        row = self._conn.execute(
+            "SELECT MAX(computed_at) AS max_ts FROM allocations"
+        ).fetchone()
+        if row is None or row["max_ts"] is None:
+            return None
+        return row["max_ts"]
+
     # ------------------------------------------------------------------
     # Blacklist
     # ------------------------------------------------------------------
