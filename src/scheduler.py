@@ -31,13 +31,16 @@ logger = logging.getLogger(__name__)
 
 async def refresh_leaderboard(nansen_client: NansenClient, datastore: DataStore) -> None:
     """
-    Fetch 30-day leaderboard and update traders table.
+    Fetch 30-day leaderboard (top 100) and update traders table.
+
+    Paginates over 2 pages of 50 entries each. Breaks early if a page
+    returns fewer than 50 entries (last page reached).
 
     Args:
         nansen_client: Async Nansen API client
         datastore: SQLite datastore
     """
-    logger.info("Starting leaderboard refresh")
+    logger.info("Starting leaderboard refresh (top 100)")
 
     # Fetch 30-day window — API requires YYYY-MM-DD (no time component)
     date_to = datetime.now(timezone.utc).date()
@@ -47,30 +50,34 @@ async def refresh_leaderboard(nansen_client: NansenClient, datastore: DataStore)
     date_to_str = date_to.isoformat()      # "2026-02-13"
 
     try:
-        entries = await nansen_client.fetch_leaderboard(
-            date_from=date_from_str,
-            date_to=date_to_str,
-            pagination={"page": 1, "per_page": 50}
-        )
-
         count = 0
-        for entry in entries:
-            # Upsert trader
-            datastore.upsert_trader(
-                address=entry.trader_address,
-                label=entry.trader_address_label
-            )
-
-            # Insert snapshot
-            datastore.insert_leaderboard_snapshot(
-                address=entry.trader_address,
+        for page in range(1, 3):  # Pages 1 and 2
+            entries = await nansen_client.fetch_leaderboard(
                 date_from=date_from_str,
                 date_to=date_to_str,
-                total_pnl=entry.total_pnl,
-                roi=entry.roi,
-                account_value=entry.account_value
+                pagination={"page": page, "per_page": 50}
             )
-            count += 1
+
+            for entry in entries:
+                # Upsert trader
+                datastore.upsert_trader(
+                    address=entry.trader_address,
+                    label=entry.trader_address_label
+                )
+
+                # Insert snapshot
+                datastore.insert_leaderboard_snapshot(
+                    address=entry.trader_address,
+                    date_from=date_from_str,
+                    date_to=date_to_str,
+                    total_pnl=entry.total_pnl,
+                    roi=entry.roi,
+                    account_value=entry.account_value
+                )
+                count += 1
+
+            if len(entries) < 50:
+                break  # Last page
 
         logger.info(f"Leaderboard refresh complete: {count} traders updated")
 
