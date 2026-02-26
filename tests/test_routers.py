@@ -5,6 +5,10 @@ FastAPI app with mocked DataStore, NansenClient, and CacheLayer dependencies.
 """
 from __future__ import annotations
 
+import os
+
+os.environ["TESTING"] = "1"
+
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
