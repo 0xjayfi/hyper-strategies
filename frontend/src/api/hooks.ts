@@ -10,6 +10,7 @@ import type {
   TradesResponse,
   PnlCurveResponse,
   AllocationsResponse,
+  AllocationHistoryResponse,
   StrategiesResponse,
   AssessmentResponse,
 } from './types';
@@ -91,6 +92,15 @@ export function useAllocations() {
   return useQuery({
     queryKey: ['allocations'],
     queryFn: () => apiClient.get<AllocationsResponse>('/api/v1/allocations'),
+    refetchInterval: REFRESH_INTERVALS.allocations,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useAllocationHistory(days: number = 30) {
+  return useQuery({
+    queryKey: ['allocation-history', days],
+    queryFn: () => apiClient.get<AllocationHistoryResponse>('/api/v1/allocations/history', { days }),
     refetchInterval: REFRESH_INTERVALS.allocations,
     staleTime: 5 * 60_000,
   });

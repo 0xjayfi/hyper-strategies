@@ -192,6 +192,23 @@ export interface AllocationsResponse {
   computed_at: string | null;
 }
 
+// Allocation History
+export interface AllocationHistoryEntry {
+  address: string;
+  final_weight: number;
+  label: string | null;
+}
+
+export interface AllocationSnapshot {
+  computed_at: string;
+  allocations: AllocationHistoryEntry[];
+}
+
+export interface AllocationHistoryResponse {
+  snapshots: AllocationSnapshot[];
+  days: number;
+}
+
 export interface IndexPortfolioEntry {
   token: string;
   side: string;

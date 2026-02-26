@@ -473,6 +473,57 @@ class DataStore:
                 ],
             )
 
+    def get_allocation_history(self, days: int = 30) -> list[dict]:
+        """Return allocation snapshots grouped by computed_at.
+
+        Returns list of dicts ordered by computed_at ascending::
+
+            [
+                {
+                    "computed_at": "2026-02-25T12:00:00",
+                    "allocations": [
+                        {"address": "0x...", "final_weight": 0.35, "label": "Trader A"},
+                        ...
+                    ]
+                },
+                ...
+            ]
+
+        Only rows within the last *days* days are included.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            """
+            SELECT a.computed_at, a.address, a.final_weight, t.label
+              FROM allocations a
+              LEFT JOIN traders t ON a.address = t.address
+             WHERE a.computed_at >= ?
+             ORDER BY a.computed_at ASC, a.final_weight DESC
+            """,
+            (cutoff,),
+        ).fetchall()
+
+        # Group by computed_at
+        from collections import OrderedDict
+
+        grouped: OrderedDict[str, list[dict]] = OrderedDict()
+        for r in rows:
+            ts = r["computed_at"]
+            if ts not in grouped:
+                grouped[ts] = []
+            grouped[ts].append(
+                {
+                    "address": r["address"],
+                    "final_weight": r["final_weight"],
+                    "label": r["label"],
+                }
+            )
+
+        return [
+            {"computed_at": ts, "allocations": allocs}
+            for ts, allocs in grouped.items()
+        ]
+
     def get_latest_allocations(self) -> dict[str, float]:
         """Return the most recent allocation batch as ``{address: final_weight}``.
 

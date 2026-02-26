@@ -397,6 +397,34 @@ class AllocationsResponse(BaseModel):
     computed_at: str | None = None
 
 
+class AllocationHistoryEntry(BaseModel):
+    """A single trader's weight at a point in time."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: str
+    final_weight: float
+    label: str | None = None
+
+
+class AllocationSnapshot(BaseModel):
+    """All allocations computed at a single timestamp."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    computed_at: str
+    allocations: list[AllocationHistoryEntry]
+
+
+class AllocationHistoryResponse(BaseModel):
+    """Response envelope for the allocation history endpoint."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    snapshots: list[AllocationSnapshot]
+    days: int
+
+
 class IndexPortfolioEntry(BaseModel):
     """A single token target in the index portfolio strategy."""
 

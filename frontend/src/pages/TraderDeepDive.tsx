@@ -165,7 +165,7 @@ export function TraderDeepDive() {
         {trader && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <ScoreBreakdown breakdown={trader.score_breakdown} />
-            <AllocationHistory currentWeight={trader.allocation_weight} />
+            <AllocationHistory address={address} currentWeight={trader.allocation_weight} />
           </div>
         )}
 

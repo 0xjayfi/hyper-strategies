@@ -434,6 +434,62 @@ class TestAllocations:
         assert row["capped_weight"] == pytest.approx(0.4)
         assert row["final_weight"] == pytest.approx(0.4)
 
+    def test_get_allocation_history_empty(self, ds: DataStore) -> None:
+        """get_allocation_history should return an empty list on a fresh DB."""
+        result = ds.get_allocation_history(days=30)
+        assert result == []
+
+    def test_get_allocation_history_multiple_snapshots(self, ds: DataStore) -> None:
+        """get_allocation_history should group allocations by computed_at and include labels."""
+        ds.upsert_trader("0xH1", label="Trader H1")
+        ds.upsert_trader("0xH2", label="Trader H2")
+
+        ts1 = "2026-02-20T00:00:00"
+        ts2 = "2026-02-20T06:00:00"
+
+        # Insert two snapshots at different times
+        for addr, weight in [("0xH1", 0.6), ("0xH2", 0.4)]:
+            ds.insert_allocation(ts1, addr, weight, weight, weight)
+        for addr, weight in [("0xH1", 0.5), ("0xH2", 0.5)]:
+            ds.insert_allocation(ts2, addr, weight, weight, weight)
+
+        history = ds.get_allocation_history(days=30)
+
+        assert len(history) == 2
+        assert history[0]["computed_at"] == ts1
+        assert history[1]["computed_at"] == ts2
+
+        # Check first snapshot contents
+        allocs1 = history[0]["allocations"]
+        assert len(allocs1) == 2
+        addrs1 = {a["address"] for a in allocs1}
+        assert addrs1 == {"0xH1", "0xH2"}
+        # Labels should be included
+        labels1 = {a["label"] for a in allocs1}
+        assert "Trader H1" in labels1
+        assert "Trader H2" in labels1
+
+        # Check second snapshot weights
+        allocs2 = history[1]["allocations"]
+        weights2 = {a["address"]: a["final_weight"] for a in allocs2}
+        assert weights2["0xH1"] == pytest.approx(0.5)
+        assert weights2["0xH2"] == pytest.approx(0.5)
+
+    def test_get_allocation_history_respects_days_cutoff(self, ds: DataStore) -> None:
+        """get_allocation_history should exclude snapshots older than the days cutoff."""
+        ds.upsert_trader("0xOLD")
+
+        old_ts = "2025-01-01T00:00:00"
+        ds.insert_allocation(old_ts, "0xOLD", 1.0, 1.0, 1.0)
+
+        # With a 30-day window, the old snapshot should not appear
+        history = ds.get_allocation_history(days=30)
+        assert len(history) == 0
+
+        # With a 500-day window, the old snapshot should appear
+        history_all = ds.get_allocation_history(days=500)
+        assert len(history_all) == 1
+
 
 # ===================================================================
 # Blacklist

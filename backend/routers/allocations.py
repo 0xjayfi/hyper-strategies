@@ -16,6 +16,9 @@ from backend.mock_data import (
 )
 from backend.schemas import (
     AllocationEntry,
+    AllocationHistoryEntry,
+    AllocationHistoryResponse,
+    AllocationSnapshot,
     AllocationsResponse,
     ConsensusToken,
     IndexPortfolioEntry,
@@ -133,6 +136,30 @@ async def get_allocations(
 
     cache.set(cache_key, response, ttl=CACHE_TTL_ALLOCATIONS)
     return response
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/allocations/history
+# ---------------------------------------------------------------------------
+
+
+@router.get("/allocations/history", response_model=AllocationHistoryResponse)
+async def get_allocation_history(
+    days: int = 30,
+    ds: DataStore = Depends(get_datastore),
+) -> AllocationHistoryResponse:
+    """Return historical allocation snapshots grouped by timestamp."""
+    raw = ds.get_allocation_history(days=days)
+    snapshots = [
+        AllocationSnapshot(
+            computed_at=entry["computed_at"],
+            allocations=[
+                AllocationHistoryEntry(**a) for a in entry["allocations"]
+            ],
+        )
+        for entry in raw
+    ]
+    return AllocationHistoryResponse(snapshots=snapshots, days=days)
 
 
 # ---------------------------------------------------------------------------
