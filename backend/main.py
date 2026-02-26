@@ -1,7 +1,9 @@
 """Hyper-Signals FastAPI application."""
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -12,8 +14,10 @@ from fastapi.responses import JSONResponse
 from backend.cache import CacheLayer
 from backend.config import ALLOWED_ORIGINS, NANSEN_API_KEY, NANSEN_BASE_URL
 from backend.routers import allocations, assess, health, leaderboard, market, positions, screener, traders
+from src.allocation import RiskConfig
 from src.datastore import DataStore
 from src.nansen_client import NansenAPIError, NansenClient, NansenRateLimitError
+from src.scheduler import run_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +40,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     cache = CacheLayer()
     app.state.cache = cache
 
+    # Launch scheduler as background task (skip in test mode)
+    if os.getenv("TESTING") != "1":
+        risk_config = RiskConfig(max_total_open_usd=50_000.0)
+        scheduler_task = asyncio.create_task(
+            run_scheduler(nansen_client, datastore, risk_config)
+        )
+        app.state.scheduler_task = scheduler_task
+
     logger.info("Hyper-Signals API ready.")
     yield
 
     # --- shutdown ---
     logger.info("Shutting down Hyper-Signals API...")
+    if hasattr(app.state, "scheduler_task"):
+        app.state.scheduler_task.cancel()
+        try:
+            await app.state.scheduler_task
+        except asyncio.CancelledError:
+            pass
     await nansen_client.close()
     datastore.close()
     logger.info("Hyper-Signals API stopped.")
