@@ -84,15 +84,57 @@ def _build_allocations_from_db(ds: DataStore) -> tuple[list[dict], str | None]:
     return entries, None  # computed_at not exposed by get_latest_allocations
 
 
-def _build_risk_caps(entries: list[dict]) -> RiskCaps:
-    """Compute risk cap utilisation from allocation entries."""
+def _build_risk_caps(
+    entries: list[dict], ds: DataStore | None = None
+) -> RiskCaps:
+    """Compute risk cap utilisation from allocation entries.
+
+    When a *ds* (DataStore) is provided, directional exposure is computed
+    from real position snapshots.  For each trader we sum
+    ``position_value_usd`` grouped by side ("Long" / "Short"), then weight
+    by the trader's allocation weight.  If no position data exists for
+    *any* trader we fall back to a naive 50/50 split.
+    """
     n_positions = len(entries)
     max_weight = max((e["weight"] for e in entries), default=0.0)
-
-    # Estimate directional exposure: assume equal long/short split as default.
     total_weight = sum(e["weight"] for e in entries)
+
+    # --- Directional exposure from real positions --------------------------
     long_est = total_weight * 0.5
     short_est = total_weight * 0.5
+
+    if ds is not None and entries:
+        has_position_data = False
+        real_long = 0.0
+        real_short = 0.0
+
+        for entry in entries:
+            positions = ds.get_latest_position_snapshot(entry["address"])
+            if not positions:
+                continue
+
+            pos_long = sum(
+                p.get("position_value_usd", 0) or 0
+                for p in positions
+                if p.get("side") == "Long"
+            )
+            pos_short = sum(
+                p.get("position_value_usd", 0) or 0
+                for p in positions
+                if p.get("side") == "Short"
+            )
+            pos_total = pos_long + pos_short
+
+            if pos_total > 0:
+                has_position_data = True
+                # Distribute this trader's weight proportionally to their
+                # long/short position split.
+                real_long += entry["weight"] * (pos_long / pos_total)
+                real_short += entry["weight"] * (pos_short / pos_total)
+
+        if has_position_data:
+            long_est = real_long
+            short_est = real_short
 
     return RiskCaps(
         position_count=RiskCapStatus(current=n_positions, max=MAX_TOTAL_POSITIONS),
@@ -124,7 +166,7 @@ async def get_allocations(
         entries = generate_mock_allocations()
         computed_at = datetime.now(timezone.utc).isoformat()
 
-    risk_caps = _build_risk_caps(entries)
+    risk_caps = _build_risk_caps(entries, ds=ds)
 
     response = AllocationsResponse(
         allocations=[AllocationEntry(**e) for e in entries],
