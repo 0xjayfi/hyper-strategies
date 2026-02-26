@@ -172,7 +172,14 @@ class LeaderboardTrader(BaseModel):
     is_blacklisted: bool = False
     is_smart_money: bool = False
 
-    # Score breakdown (available when from DataStore)
+    # Score breakdown (available when from DataStore).
+    # Names reflect legacy trade-based scoring; position-based mapping:
+    #   score_roi      → account_growth_score
+    #   score_sharpe   → drawdown_score
+    #   score_win_rate → leverage_score
+    #   score_consistency → consistency_score (unchanged)
+    #   score_smart_money → smart_money_bonus (unchanged)
+    #   score_risk_mgmt   → avg(liquidation_distance, diversity)
     score_roi: float | None = None
     score_sharpe: float | None = None
     score_win_rate: float | None = None
