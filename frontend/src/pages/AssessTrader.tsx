@@ -42,7 +42,7 @@ export function AssessTrader() {
   return (
     <PageLayout
       title="Assess Trader"
-      description="Evaluate any Hyperliquid trader address across 10 independent scoring strategies. Get a quality verdict with confidence tier based on how many strategies the address passes."
+      description="Evaluate any Hyperliquid trader address across 10 independent scoring strategies. Get a quality verdict with a confidence tier based on how many strategies the address passes."
     >
       <div className="mx-auto max-w-2xl pt-6 md:pt-12">
         <form onSubmit={handleSubmit} className="space-y-4">

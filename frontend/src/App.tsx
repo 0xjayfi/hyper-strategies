@@ -5,6 +5,7 @@ import { LoadingState } from './components/shared/LoadingState';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 
+const LandingPage = lazy(() => import('./pages/LandingPage').then(m => ({ default: m.LandingPage })));
 const MarketOverview = lazy(() => import('./pages/MarketOverview').then(m => ({ default: m.MarketOverview })));
 const PositionExplorer = lazy(() => import('./pages/PositionExplorer').then(m => ({ default: m.PositionExplorer })));
 const TraderLeaderboard = lazy(() => import('./pages/TraderLeaderboard').then(m => ({ default: m.TraderLeaderboard })));
@@ -31,7 +32,8 @@ function AppRoutes() {
     <ErrorBoundary>
       <Suspense fallback={<LoadingState message="Loading..." />}>
         <Routes>
-          <Route path="/" element={<MarketOverview />} />
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/market" element={<MarketOverview />} />
           <Route path="/positions" element={<PositionExplorer />} />
           <Route path="/leaderboard" element={<TraderLeaderboard />} />
           <Route path="/traders/:address" element={<TraderDeepDive />} />

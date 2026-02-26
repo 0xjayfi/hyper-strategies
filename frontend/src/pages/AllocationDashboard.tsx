@@ -67,22 +67,7 @@ export function AllocationDashboard() {
   return (
     <PageLayout
       title="Allocation Dashboard"
-      description={`Output of the PnL-weighted allocation engine: who the system allocates capital to, how much, and the derived strategy signals.
-
-Data source: SQLite DB only (zero Nansen API calls). Falls back to mock data if DB is empty.
-Endpoints (called in parallel):
-  GET /api/v1/allocations → allocation weights + risk caps
-  GET /api/v1/allocations/strategies → index portfolio, consensus, sizing
-
-How it works:
-/allocations — Reads allocations table, enriches with labels + ROI tier from trader_scores. Sorts by weight, caps at top 5 (MAX_TOTAL_POSITIONS). Computes risk cap utilisation.
-
-/allocations/strategies:
-  Index Portfolio — Weight-averages all trader positions by allocation, normalised to 50% of $100k account.
-  Consensus — Per-token weighted vote (long vs short), requires >= 3 voters.
-  Sizing — Per-trader max_size_usd = weight * account value.
-
-Auto-refresh: every 1 hour.`}
+      description="The output of the scoring engine: which traders receive capital allocation, how much weight each gets, and the derived portfolio signals. Includes index portfolio construction, consensus direction per token, and risk cap monitoring. Auto-refreshes hourly."
       lastUpdated={lastUpdated}
       onRefresh={() => { alloc.refetch(); strat.refetch(); }}
       isRefreshing={alloc.isFetching || strat.isFetching}

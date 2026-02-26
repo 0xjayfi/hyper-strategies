@@ -1,20 +1,25 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --color-surface: #0d1117;
-  --color-card: #161b22;
+  --color-surface: #0A0A0A;
+  --color-card: #1B1B1B;
   --color-text-primary: #e6edf3;
   --color-text-muted: #8b949e;
-  --color-border: #30363d;
-  --color-green: #3fb950;
-  --color-red: #f85149;
-  --color-accent: #58a6ff;
+  --color-border: #2D2D2D;
+  --color-green: #00FFA7;
+  --color-red: #FF004B;
+  --color-accent: #00FFA7;
+  --color-nansen-blue: #008EFF;
+  --color-nansen-purple: #9900FF;
+  --color-nansen-dark-green: #002811;
+  --color-nansen-medium-green: #004C37;
 }
 
 body {
   background-color: var(--color-surface);
   color: var(--color-text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
 }
 
 .font-mono-nums {

@@ -3,9 +3,10 @@ import { NavLink } from 'react-router';
 import { BarChart3, Table, Trophy, PieChart, PanelLeftClose, PanelLeft, ClipboardCheck } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useHealthCheck } from '../../api/hooks';
+import { NansenIcon } from '../icons/NansenIcon';
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Market Overview', icon: BarChart3, shortcut: '1' },
+  { to: '/market', label: 'Market Overview', icon: BarChart3, shortcut: '1' },
   { to: '/positions', label: 'Position Explorer', icon: Table, shortcut: '2' },
   { to: '/leaderboard', label: 'Leaderboard', icon: Trophy, shortcut: '3' },
   { to: '/allocations', label: 'Allocations', icon: PieChart, shortcut: '4' },
@@ -25,7 +26,7 @@ export function Sidebar() {
     >
       {/* Logo */}
       <div className="flex h-14 items-center gap-2 border-b border-border px-4">
-        <BarChart3 className="h-5 w-5 shrink-0 text-accent" />
+        <NansenIcon className="h-5 w-5 shrink-0 text-[#00FFA7]" />
         <span
           className={cn(
             'text-sm font-semibold text-text-primary whitespace-nowrap overflow-hidden transition-opacity duration-200',
@@ -42,7 +43,7 @@ export function Sidebar() {
           <NavLink
             key={to}
             to={to}
-            end={to === '/'}
+            end
             title={label}
             className={({ isActive }) =>
               cn(
