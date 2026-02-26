@@ -236,12 +236,17 @@ CREATE TABLE IF NOT EXISTS ml_feature_snapshots (
     trades_per_day          REAL,
     consistency_score       REAL,
     smart_money_bonus       REAL,
+    -- DEPRECATED: risk_mgmt_score (constant value, removed from ML model; NULL going forward)
     risk_mgmt_score         REAL,
     recency_decay           REAL,
+    -- DEPRECATED: position_concentration (no data source, removed from ML model; NULL going forward)
     position_concentration  REAL,
+    -- DEPRECATED: num_open_positions (no data source, removed from ML model; NULL going forward)
     num_open_positions      INTEGER,
+    -- DEPRECATED: avg_leverage (no data source, removed from ML model; NULL going forward)
     avg_leverage            REAL,
     pnl_volatility_7d      REAL,
+    -- DEPRECATED: market_correlation (always 0, removed from ML model; NULL going forward)
     market_correlation      REAL,
     days_since_last_trade   REAL,
     max_drawdown_30d        REAL,

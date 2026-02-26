@@ -10,7 +10,6 @@ from snap.scoring import (
     compute_trade_metrics,
     compute_consistency_score,
     compute_smart_money_bonus,
-    compute_risk_mgmt_score,
     compute_recency_decay,
 )
 
@@ -29,13 +28,8 @@ FEATURE_COLUMNS: list[str] = [
     "trades_per_day",
     "consistency_score",
     "smart_money_bonus",
-    "risk_mgmt_score",
     "recency_decay",
-    "position_concentration",
-    "num_open_positions",
-    "avg_leverage",
     "pnl_volatility_7d",
-    "market_correlation",
     "days_since_last_trade",
     "max_drawdown_30d",
 ]
@@ -114,15 +108,28 @@ def _get_nearest_positions(
     address: str,
     as_of: datetime,
 ) -> list[dict]:
-    """Get position snapshot nearest to as_of date."""
+    """Get position snapshot nearest to as_of date.
+
+    First finds the nearest ``captured_at`` timestamp at or before *as_of*,
+    then fetches all positions from that single snapshot so we don't mix
+    rows from different snapshot batches.
+    """
     as_of_str = as_of.strftime("%Y-%m-%dT%H:%M:%SZ")
+    # First find the nearest snapshot timestamp
+    nearest = conn.execute(
+        """SELECT captured_at FROM position_snapshots
+           WHERE address = ? AND captured_at <= ?
+           ORDER BY captured_at DESC LIMIT 1""",
+        (address, as_of_str),
+    ).fetchone()
+    if not nearest:
+        return []
+    # Then fetch all positions from that exact snapshot
     rows = conn.execute(
         """SELECT token_symbol, side, position_value_usd, leverage_value
            FROM position_snapshots
-           WHERE address = ? AND captured_at <= ?
-           ORDER BY captured_at DESC
-           LIMIT 50""",
-        (address, as_of_str),
+           WHERE address = ? AND captured_at = ?""",
+        (address, nearest[0]),
     ).fetchall()
     if not rows:
         return []
@@ -180,22 +187,7 @@ def extract_trader_features(
     # Scoring features
     consistency = compute_consistency_score(roi_7d, roi_30d, roi_90d)
     smart_money = compute_smart_money_bonus(label)
-    avg_leverage = None  # computed from positions below
-    risk_mgmt = compute_risk_mgmt_score(avg_leverage)
-    recency = compute_recency_decay(metrics.get("most_recent_trade"))
-
-    # Position-based features
-    positions = _get_nearest_positions(conn, address, as_of)
-    pos_values = [p["value_usd"] for p in positions]
-    pos_leverages = [p["leverage"] for p in positions]
-    position_concentration = compute_position_concentration(pos_values)
-    num_open_positions = len(positions)
-    avg_leverage_val = (
-        sum(pos_leverages) / len(pos_leverages) if pos_leverages else 0.0
-    )
-
-    # Recompute risk_mgmt with actual leverage
-    risk_mgmt = compute_risk_mgmt_score(avg_leverage_val if avg_leverage_val > 0 else None)
+    recency = compute_recency_decay(metrics.get("most_recent_trade"), as_of=as_of)
 
     # PnL volatility (per-trade PnL stddev over last 7 days)
     pnls_7d = [float(t.get("closed_pnl", 0) or 0) for t in trades_7]
@@ -216,9 +208,6 @@ def extract_trader_features(
     pnls_30d = [float(t.get("closed_pnl", 0) or 0) for t in trades_30]
     max_dd = compute_max_drawdown(pnls_30d)
 
-    # Market correlation — placeholder 0.0 (requires BTC price series)
-    market_corr = 0.0
-
     return {
         "roi_7d": roi_7d,
         "roi_30d": roi_30d,
@@ -234,13 +223,8 @@ def extract_trader_features(
         "trades_per_day": metrics["trades_per_day"],
         "consistency_score": consistency,
         "smart_money_bonus": smart_money,
-        "risk_mgmt_score": risk_mgmt,
         "recency_decay": recency,
-        "position_concentration": position_concentration,
-        "num_open_positions": num_open_positions,
-        "avg_leverage": avg_leverage_val,
         "pnl_volatility_7d": pnl_vol,
-        "market_correlation": market_corr,
         "days_since_last_trade": days_since,
         "max_drawdown_30d": max_dd,
     }

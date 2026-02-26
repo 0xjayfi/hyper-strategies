@@ -40,7 +40,16 @@ def _seed_db(conn, num_traders=5, days=90):
 
 
 class TestGenerateWindowDates:
-    def test_returns_dates(self):
+    def test_default_stride_is_7(self):
+        """Default stride_days should be 7, not 3."""
+        dates = generate_window_dates(
+            start=datetime(2026, 1, 1),
+            end=datetime(2026, 1, 22),
+        )
+        # Jan 1, 8, 15 = 3 windows with default stride=7
+        assert len(dates) == 3
+
+    def test_returns_dates_stride_3(self):
         dates = generate_window_dates(
             start=datetime(2026, 1, 1),
             end=datetime(2026, 1, 15),
@@ -63,6 +72,17 @@ class TestGenerateWindowDates:
             stride_days=3,
         )
         assert len(dates) == 0
+
+    def test_stride_7_produces_fewer_windows_than_stride_3(self):
+        """Stride=7 should produce significantly fewer windows than stride=3."""
+        start = datetime(2026, 1, 1)
+        end = datetime(2026, 4, 1)  # 90-day range
+        dates_stride_3 = generate_window_dates(start, end, stride_days=3)
+        dates_stride_7 = generate_window_dates(start, end, stride_days=7)
+        assert len(dates_stride_7) < len(dates_stride_3)
+        # Stride-7 should produce roughly 3/7 as many windows as stride-3
+        ratio = len(dates_stride_7) / len(dates_stride_3)
+        assert 0.3 < ratio < 0.6
 
 
 class TestComputeForwardPnl:

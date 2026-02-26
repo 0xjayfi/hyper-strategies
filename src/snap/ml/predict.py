@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 
 from snap.ml.features import FEATURE_COLUMNS
 from snap.ml.train import load_model
+
+
+def _load_feature_caps(model_path: str) -> dict:
+    """Load feature caps from the model's metadata sidecar file."""
+    meta_path = model_path.replace(".json", ".meta.json")
+    try:
+        with open(meta_path) as f:
+            meta = json.load(f)
+        return meta.get("feature_caps", {})
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
 
 def predict_trader_scores(
@@ -28,8 +41,21 @@ def predict_trader_scores(
     if model is None:
         return []
 
+    caps = _load_feature_caps(model_path)
+
     addresses = [f["address"] for f in features_list]
     X = np.array([[f.get(col, 0.0) or 0.0 for col in FEATURE_COLUMNS] for f in features_list])
+
+    # Apply same inf/NaN handling as training to avoid train/serve skew
+    for i, col in enumerate(FEATURE_COLUMNS):
+        cap = caps.get(col)
+        if cap is not None:
+            X[:, i] = np.where(np.isposinf(X[:, i]), cap, X[:, i])
+            X[:, i] = np.where(np.isneginf(X[:, i]), -cap, X[:, i])
+        else:
+            X[:, i] = np.where(np.isinf(X[:, i]), 0.0, X[:, i])
+    X = np.nan_to_num(X, nan=0.0)
+
     predictions = model.predict(X)
 
     return [

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime, timedelta
 
@@ -9,11 +10,13 @@ import pandas as pd
 
 from snap.ml.features import FEATURE_COLUMNS, extract_all_trader_features
 
+logger = logging.getLogger(__name__)
+
 
 def generate_window_dates(
     start: datetime,
     end: datetime,
-    stride_days: int = 3,
+    stride_days: int = 7,
 ) -> list[datetime]:
     """Generate evaluation dates from start to end at stride intervals.
 
@@ -54,7 +57,7 @@ def build_dataset(
     conn: sqlite3.Connection,
     start: datetime,
     end: datetime,
-    stride_days: int = 3,
+    stride_days: int = 7,
     forward_days: int = 7,
     lookback_days: int = 90,
 ) -> pd.DataFrame:
@@ -81,7 +84,11 @@ def build_dataset(
             acct_row = conn.execute(
                 "SELECT account_value FROM traders WHERE address = ?", (addr,)
             ).fetchone()
-            acct_val = float(acct_row[0]) if acct_row and acct_row[0] else 100_000.0
+            if not (acct_row and acct_row[0]):
+                logger.warning("No account_value for %s, using 100k fallback", addr)
+                acct_val = 100_000.0
+            else:
+                acct_val = float(acct_row[0])
             normalized_pnl = fwd_pnl / acct_val if acct_val > 0 else 0.0
 
             row = {"address": addr, "window_date": wdate, **feat, "forward_pnl_7d": normalized_pnl}

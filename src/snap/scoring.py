@@ -535,13 +535,23 @@ def compute_risk_mgmt_score(avg_leverage: float | None) -> float:
     return 0.1
 
 
-def compute_recency_decay(most_recent_trade_ts: str | None) -> float:
+def compute_recency_decay(most_recent_trade_ts: str | None, as_of: datetime | None = None) -> float:
     """Recency decay based on days since last trade.
 
-    ``days_since_last = (now - most_recent_trade_timestamp).days``
+    ``days_since_last = (reference_time - most_recent_trade_timestamp).days``
     ``recency_decay = exp(-days_since_last / 30)``
 
     If no timestamp provided, returns ``0.0`` (no recent activity).
+
+    Parameters
+    ----------
+    most_recent_trade_ts:
+        ISO-8601 timestamp of the most recent trade.
+    as_of:
+        Reference point in time for computing days-since.  When ``None``
+        (the default), wall-clock UTC is used -- matching the original
+        behaviour for live/production callers.  Pass an explicit value
+        when scoring historical data to avoid data leakage.
     """
     if most_recent_trade_ts is None:
         return 0.0
@@ -555,8 +565,11 @@ def compute_recency_decay(most_recent_trade_ts: str | None) -> float:
         )
         return 0.0
 
-    now = datetime.now(timezone.utc)
-    days_since_last = (now - last_trade_dt).days
+    reference = as_of if as_of is not None else datetime.now(timezone.utc)
+    # Ensure reference is timezone-aware for subtraction
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    days_since_last = (reference - last_trade_dt).days
     return math.exp(-days_since_last / 30.0)
 
 

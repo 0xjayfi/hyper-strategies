@@ -28,5 +28,18 @@ def test_ml_min_train_samples():
     assert config.ML_MIN_TRAIN_SAMPLES == 5000
 
 
-def test_ml_backfill_window_stride_days():
-    assert config.ML_BACKFILL_STRIDE_DAYS == 3
+def test_ml_backfill_stride_days_default_is_7():
+    """ML_BACKFILL_STRIDE_DAYS default changed from 3 to 7 to match dataset.py."""
+    assert config.ML_BACKFILL_STRIDE_DAYS == 7
+
+
+def test_ml_profit_factor_cap():
+    """ML_PROFIT_FACTOR_CAP provides a default cap for inf profit_factor values."""
+    assert hasattr(config, "ML_PROFIT_FACTOR_CAP")
+    assert config.ML_PROFIT_FACTOR_CAP == 20.0
+
+
+def test_ml_early_stopping_rounds():
+    """ML_EARLY_STOPPING_ROUNDS controls XGBoost early stopping patience."""
+    assert hasattr(config, "ML_EARLY_STOPPING_ROUNDS")
+    assert config.ML_EARLY_STOPPING_ROUNDS == 50

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime, timedelta
 
 from snap.ml.features import FEATURE_COLUMNS, extract_all_trader_features
 from snap.ml.dataset import compute_forward_pnl
+
+logger = logging.getLogger(__name__)
 
 
 def snapshot_trader_features(
@@ -74,6 +77,11 @@ def backfill_forward_pnl(
                 "SELECT account_value FROM traders WHERE address = ?", (address,)
             ).fetchone()
             acct_val = float(acct_row[0]) if acct_row and acct_row[0] else 100_000.0
+            if not (acct_row and acct_row[0]):
+                logger.warning(
+                    "Using $100K fallback account value for %s (no account_value in traders table)",
+                    address,
+                )
             normalized = pnl / acct_val if acct_val > 0 else 0.0
             conn.execute(
                 "UPDATE ml_feature_snapshots SET forward_pnl_7d = ? WHERE id = ?",
