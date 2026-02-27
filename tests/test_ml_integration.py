@@ -130,3 +130,23 @@ def test_shadow_mode_old_23_feature_model_backward_compat(tmp_path):
     # This documents the current behavior -- old models must be retrained.
     with pytest.raises(ValueError):
         predict_trader_scores(model_path, test_features)
+
+
+def test_shadow_mode_auto_detects_v3(tmp_path):
+    """Shadow mode should use stacked pipeline when stacked_pipeline.pkl exists."""
+    from snap.ml.predict import load_stacked_pipeline
+
+    # Import the helper from test_ml_predict
+    import sys, importlib
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_ml_predict import _create_synthetic_stacked_model
+
+    # Create a v3 model dir with pipeline
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    _create_synthetic_stacked_model(model_dir)
+
+    # Verify auto-detection
+    pipeline = load_stacked_pipeline(str(model_dir))
+    assert pipeline is not None
+    assert len(pipeline.base_models) == 8

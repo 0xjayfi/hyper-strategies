@@ -1733,28 +1733,41 @@ async def refresh_trader_universe(
     # If a trained model exists, compute ML predictions alongside composite scores
     # and log them. This does NOT affect trader selection.
     try:
-        from snap.config import ML_TRADER_SELECTION, ML_MODEL_DIR
+        from snap.config import ML_MODEL_DIR
         from pathlib import Path
-        import glob as _glob
-        model_files = sorted(_glob.glob(str(Path(ML_MODEL_DIR) / "xgb_trader_*.json")))
-        if model_files:
-            active_model = model_files[-1]  # latest
-            from snap.ml.features import FEATURE_COLUMNS, extract_all_trader_features
-            from snap.ml.predict import predict_trader_scores
-            from snap.database import get_connection
-            import logging
-            _ml_logger = logging.getLogger(__name__)
-            _ml_logger.info("ML shadow mode: scoring with model %s", active_model)
-            data_conn = get_connection(db_path)
+        import logging
+        _ml_logger = logging.getLogger(__name__)
+
+        model_dir = str(Path(ML_MODEL_DIR))
+
+        # Auto-detect v3 stacked pipeline vs v1 single model
+        if (Path(model_dir) / "stacked_pipeline.pkl").exists():
+            from snap.ml.predict import predict_stacked_scores
             from datetime import datetime
-            all_features = extract_all_trader_features(data_conn, datetime.utcnow())
-            if all_features:
-                predictions = predict_trader_scores(active_model, all_features)
-                predictions.sort(key=lambda x: x["ml_predicted_pnl"], reverse=True)
-                _ml_logger.info(
-                    "ML shadow top-5: %s",
-                    [(p["address"][:10], f"{p['ml_predicted_pnl']:+.4f}") for p in predictions[:5]],
-                )
+            _ml_logger.info("ML shadow mode: using v3 stacked pipeline from %s", model_dir)
+            predictions = predict_stacked_scores(model_dir, db_path, datetime.utcnow())
+        else:
+            import glob as _glob
+            model_files = sorted(_glob.glob(str(Path(model_dir) / "xgb_trader_*.json")))
+            if model_files:
+                active_model = model_files[-1]
+                from snap.ml.features import extract_all_trader_features
+                from snap.ml.predict import predict_trader_scores
+                from snap.database import get_connection
+                from datetime import datetime
+                _ml_logger.info("ML shadow mode: using v1 model %s", active_model)
+                data_conn = get_connection(db_path)
+                all_features = extract_all_trader_features(data_conn, datetime.utcnow())
+                predictions = predict_trader_scores(active_model, all_features) if all_features else []
+            else:
+                predictions = []
+
+        if predictions:
+            predictions.sort(key=lambda x: x["ml_predicted_pnl"], reverse=True)
+            _ml_logger.info(
+                "ML shadow top-5: %s",
+                [(p["address"][:10], f"{p['ml_predicted_pnl']:+.4f}") for p in predictions[:5]],
+            )
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("ML shadow mode failed: %s", e)
