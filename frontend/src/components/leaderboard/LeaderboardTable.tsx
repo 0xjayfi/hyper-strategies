@@ -73,7 +73,7 @@ const columns = [
     enableSorting: false,
   }),
   columnHelper.accessor('score', {
-    header: 'Score',
+    header: () => <Tooltip text="Final score = (0.30×Growth + 0.20×Drawdown + 0.15×Leverage + 0.15×Liq Dist + 0.10×Diversity + 0.10×Consistency) × Smart Money Bonus × Recency Decay">Score</Tooltip>,
     cell: (info) => {
       const val = info.getValue();
       if (val == null) return <span className="text-text-muted">—</span>;
