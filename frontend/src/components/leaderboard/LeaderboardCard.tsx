@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router';
 import type { LeaderboardTrader } from '../../api/types';
 import { truncateAddress } from '../../lib/utils';
 import { SmartMoneyBadge } from '../shared/SmartMoneyBadge';
+import { Tooltip } from '../shared/Tooltip';
 
 interface LeaderboardCardProps {
   data: LeaderboardTrader[];
@@ -62,11 +63,15 @@ export function LeaderboardCardList({ data, onSelectTrader }: LeaderboardCardPro
               <MiniBar value={trader.score} />
             </div>
             <div>
-              <span className="text-[10px] text-text-muted">Growth</span>
+              <Tooltip text="Measures PnL growth relative to account size. Higher = more profitable trading.">
+                <span className="text-[10px] text-text-muted">Growth</span>
+              </Tooltip>
               <MiniBar value={trader.score_growth} />
             </div>
             <div>
-              <span className="text-[10px] text-text-muted">Drawdown</span>
+              <Tooltip text="Penalizes large peak-to-trough equity drops. Higher = more controlled losses.">
+                <span className="text-[10px] text-text-muted">Drawdown</span>
+              </Tooltip>
               <MiniBar value={trader.score_drawdown} />
             </div>
             <div>
