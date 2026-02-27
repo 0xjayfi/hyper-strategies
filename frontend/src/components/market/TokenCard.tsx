@@ -11,19 +11,26 @@ export function TokenCard({ token }: TokenCardProps) {
   const longPct = token.long_short_ratio / (1 + token.long_short_ratio) * 100;
   const shortPct = 100 - longPct;
   const fundingPositive = token.funding_rate >= 0;
+  const hasFunding = Math.abs(token.funding_rate) > 1e-6;
 
   return (
     <div className="rounded-lg border border-border bg-card p-3 md:p-4 space-y-3">
       {/* Header */}
       <div className="flex items-center justify-between">
         <TokenBadge token={token.symbol} className="text-sm" />
-        <span
-          className={`rounded px-1.5 py-0.5 text-xs font-medium font-mono-nums ${
-            fundingPositive ? 'bg-green/15 text-green' : 'bg-red/15 text-red'
-          }`}
-        >
-          Funding {fundingPositive ? '+' : ''}{(token.funding_rate * 100).toFixed(4)}%
-        </span>
+        {hasFunding ? (
+          <span
+            className={`rounded px-1.5 py-0.5 text-xs font-medium font-mono-nums ${
+              fundingPositive ? 'bg-green/15 text-green' : 'bg-red/15 text-red'
+            }`}
+          >
+            Funding {fundingPositive ? '+' : ''}{(token.funding_rate * 100).toFixed(4)}%
+          </span>
+        ) : (
+          <span className="rounded px-1.5 py-0.5 text-xs text-text-muted bg-surface">
+            Funding N/A
+          </span>
+        )}
       </div>
 
       {/* Long/Short Ratio Bar */}
