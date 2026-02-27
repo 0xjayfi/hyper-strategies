@@ -6,6 +6,9 @@ import sqlite3
 import statistics
 from datetime import datetime, timedelta
 
+import numpy as np
+import pandas as pd
+
 from snap.scoring import (
     compute_trade_metrics,
     compute_consistency_score,
@@ -32,6 +35,15 @@ FEATURE_COLUMNS: list[str] = [
     "pnl_volatility_7d",
     "days_since_last_trade",
     "max_drawdown_30d",
+]
+
+EXTRA_RAW_FEATURES: list[str] = [
+    "roi_momentum_7_30",
+    "roi_momentum_30_90",
+    "pnl_momentum_7_30",
+    "wr_x_pf",
+    "sharpe_x_wr",
+    "roi7_x_rec",
 ]
 
 
@@ -263,3 +275,112 @@ def extract_all_trader_features(
             features["address"] = addr
             results.append(features)
     return results
+
+
+def add_derived_features(df: pd.DataFrame, training: bool = True) -> pd.DataFrame:
+    """Add cross-sectional normalization, rank, and momentum features.
+
+    Args:
+        df: DataFrame with FEATURE_COLUMNS columns and a grouping column
+            (``window_date`` for training, ``snapshot_date`` for inference).
+        training: If True, winsorize and demean the target column
+            ``forward_pnl_7d``. Set to False at inference time when no
+            target column exists.
+
+    Returns:
+        DataFrame with additional derived columns.
+    """
+    date_col = "window_date" if "window_date" in df.columns else "snapshot_date"
+
+    for col in FEATURE_COLUMNS:
+        fm = np.isfinite(df[col])
+        if (~fm).any() and fm.any():
+            cap = max(float(df.loc[fm, col].quantile(0.95)), 10.0)
+            df.loc[~fm, col] = cap
+    df[FEATURE_COLUMNS] = df[FEATURE_COLUMNS].fillna(0.0)
+
+    if training:
+        lo = float(df["forward_pnl_7d"].quantile(0.05))
+        hi = float(df["forward_pnl_7d"].quantile(0.95))
+        df["forward_pnl_7d"] = df["forward_pnl_7d"].clip(lo, hi)
+        wm = df.groupby(date_col)["forward_pnl_7d"].transform("mean")
+        df["target_dm"] = df["forward_pnl_7d"] - wm
+
+    for col in FEATURE_COLUMNS:
+        m = df.groupby(date_col)[col].transform("mean")
+        s = df.groupby(date_col)[col].transform("std")
+        df[f"{col}_dm"] = np.where(s > 0, (df[col] - m) / s, 0.0)
+        df[f"{col}_rank"] = df.groupby(date_col)[col].rank(pct=True)
+
+    df["roi_momentum_7_30"] = df["roi_7d"] - df["roi_30d"]
+    df["roi_momentum_30_90"] = df["roi_30d"] - df["roi_90d"]
+    df["pnl_momentum_7_30"] = df["pnl_7d"] - df["pnl_30d"]
+    df["wr_x_pf"] = df["win_rate"] * np.clip(df["profit_factor"], 0, 50)
+    df["sharpe_x_wr"] = df["pseudo_sharpe"] * df["win_rate"]
+    df["roi7_x_rec"] = df["roi_7d"] * df["recency_decay"]
+
+    for col in EXTRA_RAW_FEATURES:
+        m = df.groupby(date_col)[col].transform("mean")
+        s = df.groupby(date_col)[col].transform("std")
+        df[f"{col}_dm"] = np.where(s > 0, (df[col] - m) / s, 0.0)
+        df[f"{col}_rank"] = df.groupby(date_col)[col].rank(pct=True)
+
+    return df
+
+
+def get_per_sample_feature_cols() -> list[str]:
+    """Return the 48 per-sample feature column names (dm + rank variants)."""
+    cols = []
+    for c in FEATURE_COLUMNS:
+        cols.append(f"{c}_dm")
+        cols.append(f"{c}_rank")
+    for c in EXTRA_RAW_FEATURES:
+        cols.append(f"{c}_dm")
+        cols.append(f"{c}_rank")
+    return cols
+
+
+def aggregate_per_trader(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    target_col: str | None = "target_dm",
+    min_windows: int = 16,
+) -> pd.DataFrame:
+    """Aggregate per-sample features to per-trader: mean + trend.
+
+    Args:
+        df: DataFrame with per-sample features grouped by address.
+        feature_cols: List of per-sample feature column names.
+        target_col: Target column to aggregate. None at inference time.
+        min_windows: Minimum observation windows per trader.
+
+    Returns:
+        DataFrame with one row per trader containing aggregated features.
+    """
+    date_col = "window_date" if "window_date" in df.columns else "snapshot_date"
+    results = []
+    for addr, group in df.groupby("address"):
+        if len(group) < min_windows:
+            continue
+        group = group.sort_values(date_col)
+        n = len(group)
+        row: dict = {"address": addr, "n_windows": n}
+        for col in feature_cols:
+            vals = group[col].values
+            row[f"{col}_mean"] = float(vals.mean())
+            k = max(1, n // 3)
+            row[f"{col}_trend"] = float(vals[-k:].mean() - vals[:k].mean())
+        if target_col is not None and target_col in df.columns:
+            row[target_col] = float(group[target_col].values.mean())
+        results.append(row)
+    return pd.DataFrame(results)
+
+
+def get_aggregated_feature_cols(per_sample_cols: list[str]) -> list[str]:
+    """Return the 97 aggregated feature column names (mean + trend + n_windows)."""
+    cols = []
+    for c in per_sample_cols:
+        cols.append(f"{c}_mean")
+        cols.append(f"{c}_trend")
+    cols.append("n_windows")
+    return cols
