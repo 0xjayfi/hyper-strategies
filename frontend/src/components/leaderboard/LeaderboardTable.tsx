@@ -12,6 +12,7 @@ import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
 import type { LeaderboardTrader } from '../../api/types';
 import { truncateAddress } from '../../lib/utils';
 import { SmartMoneyBadge } from '../shared/SmartMoneyBadge';
+import { Tooltip } from '../shared/Tooltip';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { LeaderboardCardList } from './LeaderboardCard';
 
@@ -34,6 +35,15 @@ function MiniScoreBar({ value }: { value: number | null | undefined }) {
     </div>
   );
 }
+
+const SCORE_TOOLTIPS: Record<string, string> = {
+  Growth: 'Measures PnL growth relative to account size. Higher = more profitable trading.',
+  Drawdown: 'Penalizes large peak-to-trough equity drops. Higher = more controlled losses.',
+  Leverage: 'Scores conservative leverage usage. Higher = less risky position sizing.',
+  'Liq Dist': 'Liquidation distance — how far positions are from forced liquidation. Higher = safer margins.',
+  Diversity: 'Rewards trading across multiple assets. Higher = less concentrated risk.',
+  Consistency: 'Measures steadiness of returns over time. Higher = less volatile performance.',
+};
 
 const columns = [
   columnHelper.accessor('rank', {
@@ -84,32 +94,32 @@ const columns = [
     size: 130,
   }),
   columnHelper.accessor('score_growth', {
-    header: 'Growth',
+    header: () => <Tooltip text={SCORE_TOOLTIPS['Growth']}>Growth</Tooltip>,
     cell: (info) => <MiniScoreBar value={info.getValue()} />,
     size: 100,
   }),
   columnHelper.accessor('score_drawdown', {
-    header: 'Drawdown',
+    header: () => <Tooltip text={SCORE_TOOLTIPS['Drawdown']}>Drawdown</Tooltip>,
     cell: (info) => <MiniScoreBar value={info.getValue()} />,
     size: 100,
   }),
   columnHelper.accessor('score_leverage', {
-    header: 'Leverage',
+    header: () => <Tooltip text={SCORE_TOOLTIPS['Leverage']}>Leverage</Tooltip>,
     cell: (info) => <MiniScoreBar value={info.getValue()} />,
     size: 100,
   }),
   columnHelper.accessor('score_liq_distance', {
-    header: 'Liq Dist',
+    header: () => <Tooltip text={SCORE_TOOLTIPS['Liq Dist']}>Liq Dist</Tooltip>,
     cell: (info) => <MiniScoreBar value={info.getValue()} />,
     size: 100,
   }),
   columnHelper.accessor('score_diversity', {
-    header: 'Diversity',
+    header: () => <Tooltip text={SCORE_TOOLTIPS['Diversity']}>Diversity</Tooltip>,
     cell: (info) => <MiniScoreBar value={info.getValue()} />,
     size: 100,
   }),
   columnHelper.accessor('score_consistency', {
-    header: 'Consistency',
+    header: () => <Tooltip text={SCORE_TOOLTIPS['Consistency']}>Consistency</Tooltip>,
     cell: (info) => <MiniScoreBar value={info.getValue()} />,
     size: 100,
   }),
