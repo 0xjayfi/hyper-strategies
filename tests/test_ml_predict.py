@@ -1,6 +1,7 @@
 """Tests for ML prediction and scoring integration."""
 
 import json
+import pickle
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from snap.ml.predict import (
     _load_feature_caps,
     predict_trader_scores,
     rank_traders_by_prediction,
+    load_stacked_pipeline,
+    predict_stacked_scores,
 )
 from snap.ml.train import train_model, save_model
 
@@ -164,3 +167,150 @@ class TestRankTraders:
         # Verify descending order
         pnls = [r["ml_predicted_pnl"] for r in ranked]
         assert pnls == sorted(pnls, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# Helpers for v3 stacked pipeline tests
+# ---------------------------------------------------------------------------
+
+
+def _create_synthetic_stacked_model(model_dir):
+    """Create a minimal synthetic v3 stacked model for testing."""
+    import json
+    import xgboost as xgb
+    from sklearn.linear_model import Ridge
+    from sklearn.preprocessing import StandardScaler
+    from snap.ml.features import get_per_sample_feature_cols, get_aggregated_feature_cols
+
+    per_sample_cols = get_per_sample_feature_cols()
+    agg_feat_cols = get_aggregated_feature_cols(per_sample_cols)
+    n_features = len(agg_feat_cols)
+    n_base = 8
+
+    rng = np.random.RandomState(42)
+    X = rng.randn(50, n_features).astype(np.float32)
+    y = rng.randn(50).astype(np.float32)
+
+    base_models = []
+    for i in range(n_base):
+        m = xgb.XGBRegressor(n_estimators=5, max_depth=1, random_state=i)
+        m.fit(X, y)
+        m.save_model(str(model_dir / f"base_model_{i}.json"))
+        base_models.append(m)
+
+    base_preds = np.column_stack([m.predict(X) for m in base_models])
+    X_meta = np.hstack([X, base_preds])
+    scaler = StandardScaler()
+    X_meta_s = scaler.fit_transform(X_meta)
+    meta = Ridge(alpha=60.0)
+    meta.fit(X_meta_s, y)
+
+    pipeline = {
+        "meta_learner": meta,
+        "scaler": scaler,
+        "agg_feat_cols": agg_feat_cols,
+        "per_sample_cols": per_sample_cols,
+        "min_windows": 3,
+    }
+    with open(model_dir / "stacked_pipeline.pkl", "wb") as f:
+        pickle.dump(pipeline, f)
+
+    meta_json = {
+        "model_version": "v3_stacked",
+        "feature_caps": {"profit_factor": 50.0},
+    }
+    (model_dir / "model_v3.meta.json").write_text(json.dumps(meta_json))
+    return pipeline
+
+
+def _populate_snapshots(conn, n_traders=10, n_days=20):
+    """Insert synthetic snapshots into ml_feature_snapshots."""
+    from datetime import datetime, timedelta
+    rng = np.random.RandomState(42)
+    base_date = datetime(2026, 2, 1)
+    for d in range(n_days):
+        snap_date = (base_date + timedelta(days=d)).strftime("%Y-%m-%d")
+        for t in range(n_traders):
+            addr = f"0xtrader{t:04d}"
+            vals = {c: float(rng.randn()) for c in FEATURE_COLUMNS}
+            cols = ["address", "snapshot_date"] + list(FEATURE_COLUMNS)
+            data = [addr, snap_date] + [vals[c] for c in FEATURE_COLUMNS]
+            placeholders = ", ".join(["?"] * len(data))
+            col_str = ", ".join(cols)
+            conn.execute(
+                f"INSERT INTO ml_feature_snapshots ({col_str}) VALUES ({placeholders})",
+                data,
+            )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# v3 stacked pipeline tests
+# ---------------------------------------------------------------------------
+
+
+class TestLoadStackedPipeline:
+    def test_loads_all_components(self, tmp_path):
+        _create_synthetic_stacked_model(tmp_path)
+        pipeline = load_stacked_pipeline(str(tmp_path))
+        assert pipeline is not None
+        assert len(pipeline.base_models) == 8
+        assert pipeline.meta_learner is not None
+        assert pipeline.scaler is not None
+        assert pipeline.min_windows == 3
+        assert len(pipeline.agg_feat_cols) == 97
+        assert len(pipeline.per_sample_cols) == 48
+
+    def test_returns_none_when_no_pipeline_pkl(self, tmp_path):
+        pipeline = load_stacked_pipeline(str(tmp_path))
+        assert pipeline is None
+
+    def test_feature_caps_loaded(self, tmp_path):
+        _create_synthetic_stacked_model(tmp_path)
+        pipeline = load_stacked_pipeline(str(tmp_path))
+        assert pipeline.feature_caps == {"profit_factor": 50.0}
+
+
+class TestPredictStackedScores:
+    def test_returns_predictions_for_eligible_traders(self, tmp_path):
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        _create_synthetic_stacked_model(model_dir)
+
+        db_path = str(tmp_path / "test.db")
+        conn = init_db(db_path)
+        _populate_snapshots(conn, n_traders=5, n_days=20)
+
+        from datetime import datetime
+        as_of = datetime(2026, 2, 20)
+        results = predict_stacked_scores(str(model_dir), db_path, as_of)
+
+        assert len(results) > 0
+        assert all("address" in r for r in results)
+        assert all("ml_predicted_pnl" in r for r in results)
+        assert all(np.isfinite(r["ml_predicted_pnl"]) for r in results)
+
+    def test_returns_empty_when_no_snapshots(self, tmp_path):
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        _create_synthetic_stacked_model(model_dir)
+
+        db_path = str(tmp_path / "empty.db")
+        conn = init_db(db_path)
+
+        from datetime import datetime
+        results = predict_stacked_scores(str(model_dir), db_path, datetime(2026, 2, 20))
+        assert results == []
+
+    def test_returns_empty_when_insufficient_windows(self, tmp_path):
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        _create_synthetic_stacked_model(model_dir)  # min_windows=3
+
+        db_path = str(tmp_path / "few.db")
+        conn = init_db(db_path)
+        _populate_snapshots(conn, n_traders=5, n_days=2)  # only 2 < 3
+
+        from datetime import datetime
+        results = predict_stacked_scores(str(model_dir), db_path, datetime(2026, 2, 3))
+        assert results == []
