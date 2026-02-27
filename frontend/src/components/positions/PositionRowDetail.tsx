@@ -11,7 +11,19 @@ export function PositionRowDetail({ position }: PositionRowDetailProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(position.address);
+    try {
+      await navigator.clipboard.writeText(position.address);
+    } catch {
+      // Fallback for non-HTTPS contexts
+      const textarea = document.createElement('textarea');
+      textarea.value = position.address;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -28,12 +40,12 @@ export function PositionRowDetail({ position }: PositionRowDetailProps) {
 
   return (
     <div className="border-t border-border bg-surface px-6 py-4">
-      <div className="grid grid-cols-4 gap-6 text-xs">
+      <div className="grid grid-cols-2 gap-4 text-xs sm:grid-cols-4 sm:gap-6">
         <div>
           <span className="text-text-muted">Full Address</span>
           <div className="mt-1 flex items-center gap-1.5">
-            <code className="font-mono-nums text-text-primary">{position.address}</code>
-            <button onClick={handleCopy} className="text-text-muted hover:text-text-primary">
+            <code className="truncate font-mono-nums text-text-primary max-w-[180px]">{position.address}</code>
+            <button onClick={handleCopy} title="Copy address" className="shrink-0 text-text-muted hover:text-text-primary">
               {copied ? <Check className="h-3 w-3 text-green" /> : <Copy className="h-3 w-3" />}
             </button>
           </div>
