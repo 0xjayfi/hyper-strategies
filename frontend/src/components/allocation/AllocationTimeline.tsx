@@ -107,6 +107,13 @@ export function AllocationTimeline({ allocations, computedAt }: AllocationTimeli
       <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-text-muted">
         Allocation Over Time
       </h3>
+      <p className="mb-3 text-xs leading-relaxed text-text-muted">
+        This chart tracks how capital allocation shifts across tracked traders over time.
+        Weights are recalculated every 6 hours based on updated performance scores.
+        Rising allocations indicate improving trader performance, while declining weights
+        suggest deteriorating metrics. Use this to understand how the system dynamically
+        rebalances exposure.
+      </p>
       <ResponsiveContainer width="100%" height={200}>
         <AreaChart data={chartData}>
           <XAxis dataKey="time" tick={{ fill: '#8b949e', fontSize: 10 }} />
