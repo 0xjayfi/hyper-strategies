@@ -1,13 +1,14 @@
 import { Info } from 'lucide-react';
 import type { ScoreBreakdown as ScoreBreakdownType } from '../../api/types';
+import { Tooltip } from '../shared/Tooltip';
 
 const SCORE_COMPONENTS = [
-  { key: 'roi', label: 'ROI' },
-  { key: 'sharpe', label: 'Sharpe' },
-  { key: 'win_rate', label: 'Win Rate' },
-  { key: 'consistency', label: 'Consistency' },
-  { key: 'smart_money', label: 'Smart Money' },
-  { key: 'risk_mgmt', label: 'Risk Mgmt' },
+  { key: 'roi', label: 'ROI', tip: 'Return on investment across all closed trades.' },
+  { key: 'sharpe', label: 'Sharpe', tip: 'Risk-adjusted returns — higher means better return per unit of risk.' },
+  { key: 'win_rate', label: 'Win Rate', tip: 'Percentage of trades that closed with positive PnL.' },
+  { key: 'consistency', label: 'Consistency', tip: 'Steadiness of returns across time periods.' },
+  { key: 'smart_money', label: 'Smart Money', tip: 'Bonus for addresses tagged as smart money by Nansen.' },
+  { key: 'risk_mgmt', label: 'Risk Mgmt', tip: 'Composite of leverage, drawdown, and liquidation distance behavior.' },
 ] as const;
 
 interface ScoreBreakdownProps {
@@ -44,7 +45,9 @@ export function ScoreBreakdown({ breakdown }: ScoreBreakdownProps) {
           const pct = maxScore > 0 ? (value / maxScore) * 100 : 0;
           return (
             <div key={comp.key} className="flex items-center gap-3">
-              <span className="w-24 shrink-0 text-xs text-text-muted">{comp.label}</span>
+              <Tooltip text={comp.tip}>
+                <span className="w-24 shrink-0 text-xs text-text-muted">{comp.label}</span>
+              </Tooltip>
               <div className="h-2 flex-1 overflow-hidden rounded-full bg-border">
                 <div
                   className="h-full rounded-full bg-accent transition-all"
