@@ -48,14 +48,10 @@ export function useMarketOverview() {
   });
 }
 
-export function useLeaderboard(timeframe: string = '30d', token?: string, sortBy?: string) {
+export function useLeaderboard() {
   return useQuery({
-    queryKey: ['leaderboard', timeframe, token, sortBy],
-    queryFn: () => apiClient.get<LeaderboardResponse>('/api/v1/leaderboard', {
-      timeframe,
-      token,
-      sort_by: sortBy,
-    }),
+    queryKey: ['leaderboard'],
+    queryFn: () => apiClient.get<LeaderboardResponse>('/api/v1/leaderboard'),
     refetchInterval: REFRESH_INTERVALS.leaderboard,
     staleTime: 5 * 60_000,
   });

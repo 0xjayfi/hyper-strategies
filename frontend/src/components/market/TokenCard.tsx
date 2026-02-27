@@ -22,7 +22,7 @@ export function TokenCard({ token }: TokenCardProps) {
             fundingPositive ? 'bg-green/15 text-green' : 'bg-red/15 text-red'
           }`}
         >
-          {fundingPositive ? '+' : ''}{(token.funding_rate * 100).toFixed(4)}%
+          Funding {fundingPositive ? '+' : ''}{(token.funding_rate * 100).toFixed(4)}%
         </span>
       </div>
 

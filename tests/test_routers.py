@@ -161,10 +161,11 @@ class TestLeaderboardEndpoint:
                 "consistency_score": 0.6,
                 "smart_money_bonus": 0.1,
                 "risk_management_score": 0.5,
+                "style_multiplier": 0.4,
+                "computed_at": "2026-02-27T12:00:00+00:00",
             },
         }
         mock_datastore.get_latest_allocations.return_value = {ADDR_A: 0.25}
-        mock_datastore.get_latest_metrics.return_value = _make_metrics()
         mock_datastore.get_trader.return_value = {"label": "TestTrader"}
         mock_datastore.get_trader_label.return_value = "TestTrader"
         mock_datastore.is_blacklisted.return_value = False
@@ -174,7 +175,7 @@ class TestLeaderboardEndpoint:
         body = resp.json()
 
         assert body["source"] == "datastore"
-        assert body["timeframe"] == "30d"
+        assert body["scored_at"] == "2026-02-27T12:00:00+00:00"
         assert len(body["traders"]) == 1
 
         trader = body["traders"][0]
@@ -182,8 +183,12 @@ class TestLeaderboardEndpoint:
         assert trader["address"] == ADDR_A
         assert trader["score"] == 85.0
         assert trader["allocation_weight"] == 0.25
-        assert trader["win_rate"] == 0.6
-        assert trader["num_trades"] == 50
+        assert trader["score_growth"] == 0.9
+        assert trader["score_drawdown"] == 0.8
+        assert trader["score_leverage"] == 0.7
+        assert trader["score_liq_distance"] == 0.5
+        assert trader["score_diversity"] == 0.4
+        assert trader["score_consistency"] == 0.6
 
     async def test_leaderboard_empty_datastore_falls_to_nansen(
         self, client, mock_datastore, mock_nansen
@@ -205,18 +210,18 @@ class TestLeaderboardEndpoint:
 
         assert body["source"] == "nansen_api"
         assert len(body["traders"]) >= 1
-        assert body["traders"][0]["pnl_usd"] == 5000.0
+        assert body["traders"][0]["address"] == ADDR_A
 
-    async def test_leaderboard_with_sort_and_limit(self, client, mock_datastore):
-        """Respects sort_by and limit query params."""
+    async def test_leaderboard_with_limit(self, client, mock_datastore):
+        """Respects limit query param."""
         mock_datastore.get_latest_scores.return_value = {
-            ADDR_A: {"final_score": 80.0, "passes_anti_luck": 1},
-            ADDR_B: {"final_score": 90.0, "passes_anti_luck": 1},
+            ADDR_A: {"final_score": 80.0},
+            ADDR_B: {"final_score": 90.0},
         }
         mock_datastore.get_latest_allocations.return_value = {}
-        mock_datastore.get_latest_metrics.return_value = _make_metrics()
+        mock_datastore.is_blacklisted.return_value = False
 
-        resp = await client.get("/api/v1/leaderboard?limit=1&sort_by=score")
+        resp = await client.get("/api/v1/leaderboard?limit=1")
         assert resp.status_code == 200
         body = resp.json()
         assert len(body["traders"]) == 1

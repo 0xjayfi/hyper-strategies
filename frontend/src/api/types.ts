@@ -39,24 +39,19 @@ export interface LeaderboardTrader {
   rank: number;
   address: string;
   label: string | null;
-  pnl_usd: number;
-  roi_pct: number;
-  win_rate: number | null;
-  profit_factor: number | null;
-  num_trades: number;
   score: number | null;
   allocation_weight: number | null;
   is_smart_money: boolean;
   is_blacklisted: boolean;
-  anti_luck_status: { passed: boolean; failures: string[] } | null;
 
-  // Score breakdown (available when source is datastore)
-  score_roi?: number | null;
-  score_sharpe?: number | null;
-  score_win_rate?: number | null;
+  // Position-based score components (6 axes)
+  score_growth?: number | null;
+  score_drawdown?: number | null;
+  score_leverage?: number | null;
+  score_liq_distance?: number | null;
+  score_diversity?: number | null;
   score_consistency?: number | null;
   score_smart_money?: number | null;
-  score_risk_mgmt?: number | null;
 }
 
 export interface MarketTokenOverview {
@@ -90,9 +85,9 @@ export interface MarketOverviewResponse {
 }
 
 export interface LeaderboardResponse {
-  timeframe: string;
   traders: LeaderboardTrader[];
   source: string;
+  scored_at: string | null;
 }
 
 export interface TraderPosition {

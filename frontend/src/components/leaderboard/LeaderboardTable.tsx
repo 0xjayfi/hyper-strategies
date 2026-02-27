@@ -10,14 +10,30 @@ import {
 } from '@tanstack/react-table';
 import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
 import type { LeaderboardTrader } from '../../api/types';
-import { formatPct, truncateAddress } from '../../lib/utils';
-import { PnlDisplay } from '../shared/PnlDisplay';
+import { truncateAddress } from '../../lib/utils';
 import { SmartMoneyBadge } from '../shared/SmartMoneyBadge';
-import { FilterBadges } from './FilterBadges';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { LeaderboardCardList } from './LeaderboardCard';
 
 const columnHelper = createColumnHelper<LeaderboardTrader>();
+
+/** Mini progress bar cell for score components (0–1 range). */
+function MiniScoreBar({ value }: { value: number | null | undefined }) {
+  if (value == null) return <span className="text-text-muted">—</span>;
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="h-1 w-10 overflow-hidden rounded-full bg-border">
+        <div
+          className="h-full rounded-full bg-accent"
+          style={{ width: `${Math.min(value * 100, 100)}%` }}
+        />
+      </div>
+      <span className="font-mono-nums text-[11px] text-text-primary">
+        {value.toFixed(2)}
+      </span>
+    </div>
+  );
+}
 
 const columns = [
   columnHelper.accessor('rank', {
@@ -43,66 +59,8 @@ const columns = [
         </div>
       );
     },
-    size: 200,
+    size: 180,
     enableSorting: false,
-  }),
-  columnHelper.accessor('pnl_usd', {
-    header: 'PnL',
-    cell: (info) => <PnlDisplay value={info.getValue()} compact />,
-    size: 110,
-  }),
-  columnHelper.accessor('roi_pct', {
-    header: 'ROI%',
-    cell: (info) => {
-      const val = info.getValue();
-      return (
-        <span className={`font-mono-nums ${val >= 0 ? 'text-green' : 'text-red'}`}>
-          {formatPct(val)}
-        </span>
-      );
-    },
-    size: 90,
-  }),
-  columnHelper.accessor('win_rate', {
-    header: 'Win Rate',
-    cell: (info) => {
-      const val = info.getValue();
-      return (
-        <span className="font-mono-nums text-text-primary">
-          {val != null ? `${(val * 100).toFixed(1)}%` : '—'}
-        </span>
-      );
-    },
-    size: 90,
-  }),
-  columnHelper.accessor('profit_factor', {
-    header: 'Profit Factor',
-    cell: (info) => {
-      const val = info.getValue();
-      return (
-        <span className="font-mono-nums text-text-primary">
-          {val != null ? val.toFixed(2) : '—'}
-        </span>
-      );
-    },
-    size: 100,
-  }),
-  columnHelper.accessor('num_trades', {
-    header: 'Trades',
-    cell: (info) => (
-      <span className="font-mono-nums text-text-primary">{info.getValue()}</span>
-    ),
-    size: 70,
-  }),
-  columnHelper.accessor('anti_luck_status', {
-    header: 'Anti-Luck',
-    cell: (info) => <FilterBadges status={info.getValue()} />,
-    size: 80,
-    sortingFn: (rowA, rowB) => {
-      const a = rowA.original.anti_luck_status?.passed ? 1 : 0;
-      const b = rowB.original.anti_luck_status?.passed ? 1 : 0;
-      return a - b;
-    },
   }),
   columnHelper.accessor('score', {
     header: 'Score',
@@ -124,6 +82,36 @@ const columns = [
       );
     },
     size: 130,
+  }),
+  columnHelper.accessor('score_growth', {
+    header: 'Growth',
+    cell: (info) => <MiniScoreBar value={info.getValue()} />,
+    size: 100,
+  }),
+  columnHelper.accessor('score_drawdown', {
+    header: 'Drawdown',
+    cell: (info) => <MiniScoreBar value={info.getValue()} />,
+    size: 100,
+  }),
+  columnHelper.accessor('score_leverage', {
+    header: 'Leverage',
+    cell: (info) => <MiniScoreBar value={info.getValue()} />,
+    size: 100,
+  }),
+  columnHelper.accessor('score_liq_distance', {
+    header: 'Liq Dist',
+    cell: (info) => <MiniScoreBar value={info.getValue()} />,
+    size: 100,
+  }),
+  columnHelper.accessor('score_diversity', {
+    header: 'Diversity',
+    cell: (info) => <MiniScoreBar value={info.getValue()} />,
+    size: 100,
+  }),
+  columnHelper.accessor('score_consistency', {
+    header: 'Consistency',
+    cell: (info) => <MiniScoreBar value={info.getValue()} />,
+    size: 100,
   }),
   columnHelper.accessor('allocation_weight', {
     header: 'Weight',

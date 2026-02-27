@@ -10,11 +10,8 @@ from backend.cache import CacheLayer
 from backend.config import CACHE_TTL_LEADERBOARD
 from backend.dependencies import get_cache, get_datastore, get_nansen_client
 from backend.schemas import (
-    AntiLuckStatus,
     LeaderboardResponse,
     LeaderboardTrader,
-    TimeframeEnum,
-    TokenEnum,
 )
 from src.datastore import DataStore
 from src.nansen_client import NansenAPIError, NansenClient, NansenRateLimitError
@@ -23,179 +20,110 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["leaderboard"])
 
-_TIMEFRAME_DAYS = {"7d": 7, "30d": 30, "90d": 90}
-
 
 def _build_datastore_leaderboard(
     datastore: DataStore,
     limit: int,
-    sort_by: str,
-) -> list[LeaderboardTrader] | None:
+) -> tuple[list[LeaderboardTrader], str | None] | None:
     """Attempt to build leaderboard from DataStore scores.
 
-    Returns ``None`` if no scores are available.
+    Returns ``(traders, scored_at)`` or ``None`` if no scores are available.
     """
     scores = datastore.get_latest_scores()
     if not scores:
         return None
 
     allocations = datastore.get_latest_allocations()
+    scored_at: str | None = None
 
     traders: list[LeaderboardTrader] = []
     for address, score_data in scores.items():
         trader_row = datastore.get_trader(address)
         label = trader_row["label"] if trader_row else None
 
-        # Get trade metrics for win_rate, profit_factor, num_trades
-        metrics = datastore.get_latest_metrics(address, window_days=30)
-        win_rate = metrics.win_rate if metrics else None
-        pf = metrics.profit_factor if metrics else None
-        profit_factor = pf if pf is not None and pf != float("inf") else None
-        num_trades = metrics.total_trades if metrics else 0
-        total_pnl = metrics.total_pnl if metrics else 0.0
-        roi_pct = metrics.roi_proxy if metrics else 0.0
-
-        # Anti-luck status
-        passes = bool(score_data.get("passes_anti_luck", 0))
-        anti_luck = AntiLuckStatus(
-            passed=passes,
-            failures=[] if passes else ["Did not pass anti-luck filter"],
-        )
+        # Capture scored_at from first entry that has it
+        if scored_at is None and score_data.get("computed_at"):
+            scored_at = score_data["computed_at"]
 
         traders.append(
             LeaderboardTrader(
                 rank=0,  # assigned after sorting
                 address=address,
                 label=label,
-                pnl_usd=total_pnl,
-                roi_pct=roi_pct,
-                win_rate=win_rate,
-                profit_factor=profit_factor,
-                num_trades=num_trades,
                 score=score_data.get("final_score"),
                 allocation_weight=allocations.get(address),
-                anti_luck_status=anti_luck,
                 is_blacklisted=datastore.is_blacklisted(address),
-                # Position-based scoring field mapping (DB key → API field):
-                #   normalized_roi ← account_growth_score
-                #   normalized_sharpe ← drawdown_score
-                #   normalized_win_rate ← leverage_score
-                #   consistency_score ← consistency_score (unchanged)
-                #   smart_money_bonus ← smart_money_bonus (unchanged)
-                #   risk_management_score ← avg(liquidation_distance, diversity)
-                # Field names kept as-is for frontend compatibility.
-                score_roi=score_data.get("normalized_roi"),
-                score_sharpe=score_data.get("normalized_sharpe"),
-                score_win_rate=score_data.get("normalized_win_rate"),
+                is_smart_money=bool(score_data.get("smart_money_bonus", 0)),
+                # Position-based score components (DB → API field):
+                score_growth=score_data.get("normalized_roi"),
+                score_drawdown=score_data.get("normalized_sharpe"),
+                score_leverage=score_data.get("normalized_win_rate"),
+                score_liq_distance=score_data.get("risk_management_score"),
+                score_diversity=score_data.get("style_multiplier"),
                 score_consistency=score_data.get("consistency_score"),
                 score_smart_money=score_data.get("smart_money_bonus"),
-                score_risk_mgmt=score_data.get("risk_management_score"),
             )
         )
 
-    # Sort
-    if sort_by == "pnl":
-        traders.sort(key=lambda t: t.pnl_usd, reverse=True)
-    elif sort_by == "roi":
-        traders.sort(key=lambda t: t.roi_pct, reverse=True)
-    else:  # default: score
-        traders.sort(key=lambda t: t.score or 0.0, reverse=True)
-
+    # Sort by score (only meaningful sort for position-based scoring)
+    traders.sort(key=lambda t: t.score or 0.0, reverse=True)
     traders = traders[:limit]
     for i, t in enumerate(traders, start=1):
         t.rank = i
 
-    return traders
+    return traders, scored_at
 
 
 @router.get("/leaderboard", response_model=LeaderboardResponse)
 async def get_leaderboard(
-    token: TokenEnum | None = None,
-    timeframe: TimeframeEnum = TimeframeEnum.d30,
     limit: int = Query(default=100, ge=1, le=200),
-    sort_by: str = Query(default="score"),
     nansen_client: NansenClient = Depends(get_nansen_client),
     datastore: DataStore = Depends(get_datastore),
     cache: CacheLayer = Depends(get_cache),
 ) -> LeaderboardResponse:
     """Return trader leaderboard from DataStore scores or Nansen fallback."""
-    token_val = token.value if token else "all"
-    cache_key = f"leaderboard:{token_val}:{timeframe.value}"
+    cache_key = "leaderboard:position_scores"
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
 
-    # Path 1: DataStore
-    ds_traders = _build_datastore_leaderboard(datastore, limit, sort_by)
-    if ds_traders is not None:
+    # Path 1: DataStore (position-based scores)
+    result = _build_datastore_leaderboard(datastore, limit)
+    if result is not None:
+        ds_traders, scored_at = result
         response = LeaderboardResponse(
-            timeframe=timeframe.value,
             traders=ds_traders,
             source="datastore",
+            scored_at=scored_at,
         )
         cache.set(cache_key, response, ttl=CACHE_TTL_LEADERBOARD)
         return response
 
-    # Path 2: Nansen fallback
-    days = _TIMEFRAME_DAYS.get(timeframe.value, 30)
+    # Path 2: Nansen fallback (basic ranking, no scores)
     now = datetime.now(timezone.utc)
     date_to = now.strftime("%Y-%m-%d")
-    date_from = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+    date_from = (now - timedelta(days=30)).strftime("%Y-%m-%d")
 
     try:
-        if token is not None:
-            raw = await nansen_client.fetch_pnl_leaderboard(
-                token_symbol=token.value,
-                date_from=date_from,
-                date_to=date_to,
-                pagination={"page": 1, "per_page": limit},
-            )
-            traders = []
-            for i, entry in enumerate(raw[:limit], start=1):
-                pnl = entry.pnl_usd_total or 0.0
-                roi = entry.roi_percent_total or 0.0
-                label = entry.trader_address_label
-                smart = bool(label and "smart money" in label.lower())
-                traders.append(
-                    LeaderboardTrader(
-                        rank=i,
-                        address=entry.trader_address,
-                        label=label,
-                        pnl_usd=pnl,
-                        roi_pct=roi,
-                        num_trades=entry.nof_trades or 0,
-                        is_smart_money=smart,
-                    )
+        raw = await nansen_client.fetch_leaderboard(
+            date_from=date_from,
+            date_to=date_to,
+            pagination={"page": 1, "per_page": limit},
+        )
+        traders = []
+        for i, entry in enumerate(raw[:limit], start=1):
+            label = entry.trader_address_label
+            smart = bool(label and "smart money" in label.lower())
+            traders.append(
+                LeaderboardTrader(
+                    rank=i,
+                    address=entry.trader_address,
+                    label=label,
+                    is_smart_money=smart,
                 )
-        else:
-            raw = await nansen_client.fetch_leaderboard(
-                date_from=date_from,
-                date_to=date_to,
-                pagination={"page": 1, "per_page": limit},
             )
-            traders = []
-            for i, entry in enumerate(raw[:limit], start=1):
-                label = entry.trader_address_label
-                smart = bool(label and "smart money" in label.lower())
-                traders.append(
-                    LeaderboardTrader(
-                        rank=i,
-                        address=entry.trader_address,
-                        label=label,
-                        pnl_usd=entry.total_pnl,
-                        roi_pct=entry.roi,
-                        num_trades=0,
-                        is_smart_money=smart,
-                    )
-                )
-
-        # Sort Nansen results by pnl
-        traders.sort(key=lambda t: t.pnl_usd, reverse=True)
-        for i, t in enumerate(traders, start=1):
-            t.rank = i
 
         response = LeaderboardResponse(
-            timeframe=timeframe.value,
             traders=traders,
             source="nansen_api",
         )

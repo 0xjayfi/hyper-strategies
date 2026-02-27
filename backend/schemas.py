@@ -161,31 +161,19 @@ class LeaderboardTrader(BaseModel):
     rank: int
     address: str
     label: str | None = None
-    pnl_usd: float
-    roi_pct: float
-    win_rate: float | None = None
-    profit_factor: float | None = None
-    num_trades: int
     score: float | None = None
     allocation_weight: float | None = None
-    anti_luck_status: AntiLuckStatus | None = None
     is_blacklisted: bool = False
     is_smart_money: bool = False
 
-    # Score breakdown (available when from DataStore).
-    # Names reflect legacy trade-based scoring; position-based mapping:
-    #   score_roi      → account_growth_score
-    #   score_sharpe   → drawdown_score
-    #   score_win_rate → leverage_score
-    #   score_consistency → consistency_score (unchanged)
-    #   score_smart_money → smart_money_bonus (unchanged)
-    #   score_risk_mgmt   → avg(liquidation_distance, diversity)
-    score_roi: float | None = None
-    score_sharpe: float | None = None
-    score_win_rate: float | None = None
-    score_consistency: float | None = None
-    score_smart_money: float | None = None
-    score_risk_mgmt: float | None = None
+    # Position-based score components (6 axes)
+    score_growth: float | None = None        # Account Growth (30%)
+    score_drawdown: float | None = None      # Drawdown Control (20%)
+    score_leverage: float | None = None      # Leverage Discipline (15%)
+    score_liq_distance: float | None = None  # Liquidation Safety (15%)
+    score_diversity: float | None = None     # Portfolio Diversity (10%)
+    score_consistency: float | None = None   # Consistency (10%)
+    score_smart_money: float | None = None   # Smart Money bonus
 
 
 class LeaderboardResponse(BaseModel):
@@ -193,9 +181,9 @@ class LeaderboardResponse(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    timeframe: str
     traders: list[LeaderboardTrader]
     source: str  # "datastore" or "nansen_api"
+    scored_at: str | None = None  # ISO timestamp of last scoring cycle
 
 
 # ---------------------------------------------------------------------------

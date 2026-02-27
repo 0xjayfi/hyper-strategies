@@ -1,56 +1,31 @@
 /**
  * Trader Leaderboard Page
  *
- * Ranked list of traders with scores, PnL, ROI, win rate, profit factor,
- * anti-luck status, and allocation weights.  Clicking a row shows a radar
- * chart sidebar and navigates to the trader detail page.
+ * Ranked list of traders with 6-component position-based scores.
+ * Clicking a row shows a radar chart sidebar and navigates to trader detail.
  *
  * Data source: Dual-source (SQLite DB preferred, Nansen API fallback).
- *   GET /api/v1/leaderboard?timeframe=X&token=Y&sort_by=Z
- *   ->  backend/routers/leaderboard.py
- *
- * How data is fetched:
- *   Path 1 — DataStore (preferred, when allocation engine has run):
- *     1. Reads trader_scores table for composite scores + anti-luck status.
- *     2. Reads trade_metrics table for win_rate, profit_factor, trade count,
- *        total PnL, ROI proxy.
- *     3. Reads allocations table for current allocation weights.
- *     4. Sorts by score (default), PnL, or ROI.
- *
- *   Path 2 — Nansen fallback (when no DataStore scores exist):
- *     1. Calls nansen_client.fetch_leaderboard() or fetch_pnl_leaderboard()
- *        for the selected timeframe + optional token filter.
- *     2. Returns raw PnL/ROI rankings without scores or anti-luck data.
+ *   GET /api/v1/leaderboard  ->  backend/routers/leaderboard.py
  *
  * Auto-refresh: every 1 hour (5 min stale time).
- *
- * UI components:
- *   - Timeframe toggle (7d/30d/90d) + token dropdown (TimeframeToggle)
- *   - Info banner when scores are unavailable
- *   - Sortable leaderboard table (LeaderboardTable)
- *   - Score radar chart sidebar on row selection (ScoreRadarChart)
  */
 import { useState } from 'react';
 import { useLeaderboard } from '../api/hooks';
-import { TOKENS } from '../lib/constants';
 import { PageLayout } from '../components/layout/PageLayout';
-import { TimeframeToggle } from '../components/leaderboard/TimeframeToggle';
 import { LeaderboardTable } from '../components/leaderboard/LeaderboardTable';
 import { ScoreRadarChart } from '../components/leaderboard/ScoreRadarChart';
 import { LoadingState } from '../components/shared/LoadingState';
 import { ErrorState } from '../components/shared/ErrorState';
 import { EmptyState } from '../components/shared/EmptyState';
-import { Info } from 'lucide-react';
+import { Info, Clock } from 'lucide-react';
 import { usePageTitle } from '../hooks/usePageTitle';
 
 export function TraderLeaderboard() {
   usePageTitle('Trader Leaderboard');
-  const [timeframe, setTimeframe] = useState('30d');
-  const [tokenFilter, setTokenFilter] = useState<string | undefined>(undefined);
   const [selectedTrader, setSelectedTrader] = useState<string | null>(null);
 
   const { data, isLoading, isError, error, refetch, isFetching, dataUpdatedAt } =
-    useLeaderboard(timeframe, tokenFilter);
+    useLeaderboard();
 
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt).toISOString() : undefined;
 
@@ -58,16 +33,14 @@ export function TraderLeaderboard() {
 
   const selectedTraderData = data?.traders.find((t) => t.address === selectedTrader);
 
-  // Build score breakdown from real API data when available (DataStore path),
-  // fall back to approximations for the Nansen fallback path (score components are null).
   const scoreBreakdown = selectedTraderData?.score != null
     ? {
-        roi: selectedTraderData.score_roi ?? selectedTraderData.score * 0.8,
-        sharpe: selectedTraderData.score_sharpe ?? selectedTraderData.score * 0.7,
-        win_rate: selectedTraderData.score_win_rate ?? selectedTraderData.score * 0.9,
-        consistency: selectedTraderData.score_consistency ?? selectedTraderData.score * 0.75,
-        smart_money: selectedTraderData.score_smart_money ?? 0,
-        risk_mgmt: selectedTraderData.score_risk_mgmt ?? selectedTraderData.score * 0.85,
+        growth: selectedTraderData.score_growth ?? 0,
+        drawdown: selectedTraderData.score_drawdown ?? 0,
+        leverage: selectedTraderData.score_leverage ?? 0,
+        liq_distance: selectedTraderData.score_liq_distance ?? 0,
+        diversity: selectedTraderData.score_diversity ?? 0,
+        consistency: selectedTraderData.score_consistency ?? 0,
       }
     : null;
 
@@ -80,27 +53,22 @@ export function TraderLeaderboard() {
       isRefreshing={isFetching}
     >
       <div className="space-y-4">
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-4">
-          <TimeframeToggle value={timeframe} onChange={setTimeframe} />
-          <select
-            value={tokenFilter ?? ''}
-            onChange={(e) => setTokenFilter(e.target.value || undefined)}
-            className="rounded-md border border-border bg-card px-3 py-1.5 text-xs text-text-primary outline-none focus:border-accent"
-          >
-            <option value="">All Tokens</option>
-            {TOKENS.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </div>
+        {/* Last scored timestamp */}
+        {data?.scored_at && (
+          <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2">
+            <Clock className="h-3.5 w-3.5 text-text-muted shrink-0" />
+            <span className="text-xs text-text-muted">
+              Last scored {new Date(data.scored_at).toLocaleString()}
+            </span>
+          </div>
+        )}
 
         {/* Info banner when scores unavailable */}
         {!hasScores && !isLoading && data && data.traders.length > 0 && (
           <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-4 py-2.5">
             <Info className="h-4 w-4 text-accent shrink-0" />
             <span className="text-xs text-text-muted">
-              Run the allocation engine to see trader scores and allocation weights
+              Scores will appear once the scoring engine completes its first cycle
             </span>
           </div>
         )}
@@ -123,7 +91,7 @@ export function TraderLeaderboard() {
                 onRetry={() => refetch()}
               />
             ) : !data || data.traders.length === 0 ? (
-              <EmptyState message="No traders found for the selected filters" />
+              <EmptyState message="No traders found" />
             ) : (
               <LeaderboardTable
                 data={data.traders}

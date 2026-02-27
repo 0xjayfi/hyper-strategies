@@ -427,6 +427,13 @@ class DataStore:
         ).fetchall()
         return {r["address"]: dict(r) for r in rows}
 
+    def get_latest_score_timestamp(self) -> str | None:
+        """Return the most recent ``computed_at`` from trader_scores."""
+        row = self._conn.execute(
+            "SELECT MAX(computed_at) FROM trader_scores"
+        ).fetchone()
+        return row[0] if row and row[0] else None
+
     # ------------------------------------------------------------------
     # Allocations
     # ------------------------------------------------------------------

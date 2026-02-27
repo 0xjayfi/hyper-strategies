@@ -32,6 +32,7 @@ import { SmartMoneyFlowSummary } from '../components/market/SmartMoneyFlowSummar
 import { LoadingState } from '../components/shared/LoadingState';
 import { ErrorState } from '../components/shared/ErrorState';
 import { EmptyState } from '../components/shared/EmptyState';
+import { Info } from 'lucide-react';
 import { usePageTitle } from '../hooks/usePageTitle';
 
 export function MarketOverview() {
@@ -69,9 +70,15 @@ export function MarketOverview() {
             {/* Consensus Section */}
             {data.consensus && Object.keys(data.consensus).length > 0 && (
               <div>
-                <h2 className="mb-3 text-xs font-medium text-text-muted uppercase tracking-wider">
-                  Smart Money Consensus
-                </h2>
+                <div className="group relative mb-3 flex items-center gap-1.5">
+                  <h2 className="text-xs font-medium text-text-muted uppercase tracking-wider">
+                    Smart Money Consensus
+                  </h2>
+                  <Info className="h-3.5 w-3.5 text-text-muted cursor-help" />
+                  <div className="pointer-events-none absolute left-0 top-full z-10 mt-1 w-72 rounded-lg border border-border bg-card px-3 py-2 text-xs text-text-muted opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                    Based on the net long/short positioning of Nansen-labeled smart money wallets. Confidence = |long - short| / total position value.
+                  </div>
+                </div>
                 <div className="flex gap-3 overflow-x-auto">
                   {Object.entries(data.consensus).map(([symbol, entry]) => (
                     <ConsensusIndicator key={symbol} symbol={symbol} consensus={entry} />

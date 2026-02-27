@@ -38,7 +38,8 @@
  *       Tab 3: Interactive sizing calculator (SizingCalculator)
  */
 import { useState } from 'react';
-import { Info } from 'lucide-react';
+import { Link } from 'react-router';
+import { Clock } from 'lucide-react';
 import { useAllocations, useAllocationStrategies } from '../api/hooks';
 import { PageLayout } from '../components/layout/PageLayout';
 import { LoadingState } from '../components/shared/LoadingState';
@@ -81,11 +82,22 @@ export function AllocationDashboard() {
             onRetry={() => { alloc.refetch(); strat.refetch(); }}
           />
         ) : !alloc.data || alloc.data.allocations.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-24">
-            <Info className="h-8 w-8 text-text-muted" />
-            <p className="text-sm text-text-muted">
-              No allocation data available. Run the allocation engine or enable mock data mode.
-            </p>
+          <div className="flex flex-col items-center justify-center gap-4 py-24">
+            <Clock className="h-10 w-10 text-text-muted" />
+            <div className="text-center">
+              <h3 className="text-sm font-medium text-text-primary">
+                Allocation data is building up
+              </h3>
+              <p className="mt-1 max-w-sm text-xs text-text-muted">
+                The scoring engine needs at least 48 hours of position snapshots before it can produce allocations. Scores are computed hourly — check back soon.
+              </p>
+            </div>
+            <Link
+              to="/leaderboard"
+              className="rounded-md border border-border px-4 py-1.5 text-xs text-text-primary transition-colors hover:bg-card"
+            >
+              View current scores
+            </Link>
           </div>
         ) : (
           <>

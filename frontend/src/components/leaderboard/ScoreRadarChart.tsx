@@ -9,12 +9,12 @@ import {
 import { COLORS } from '../../lib/constants';
 
 interface ScoreBreakdown {
-  roi: number;
-  sharpe: number;
-  win_rate: number;
+  growth: number;
+  drawdown: number;
+  leverage: number;
+  liq_distance: number;
+  diversity: number;
   consistency: number;
-  smart_money: number;
-  risk_mgmt: number;
 }
 
 interface ScoreRadarChartProps {
@@ -22,12 +22,12 @@ interface ScoreRadarChartProps {
 }
 
 const AXES = [
-  { key: 'roi', label: 'ROI' },
-  { key: 'sharpe', label: 'Sharpe' },
-  { key: 'win_rate', label: 'Win Rate' },
+  { key: 'growth', label: 'Growth' },
+  { key: 'drawdown', label: 'Drawdown' },
+  { key: 'leverage', label: 'Leverage' },
+  { key: 'liq_distance', label: 'Liq Dist' },
+  { key: 'diversity', label: 'Diversity' },
   { key: 'consistency', label: 'Consistency' },
-  { key: 'smart_money', label: 'Smart Money' },
-  { key: 'risk_mgmt', label: 'Risk Mgmt' },
 ] as const;
 
 export function ScoreRadarChart({ scoreBreakdown }: ScoreRadarChartProps) {
