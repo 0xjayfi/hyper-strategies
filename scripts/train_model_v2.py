@@ -33,16 +33,14 @@ from sklearn.preprocessing import StandardScaler
 
 from snap.database import get_connection
 from snap.ml.dataset import build_dataset, split_dataset_chronological
-from snap.ml.features import FEATURE_COLUMNS
-
-EXTRA_RAW_FEATURES = [
-    "roi_momentum_7_30",
-    "roi_momentum_30_90",
-    "pnl_momentum_7_30",
-    "wr_x_pf",
-    "sharpe_x_wr",
-    "roi7_x_rec",
-]
+from snap.ml.features import (
+    FEATURE_COLUMNS,
+    EXTRA_RAW_FEATURES,
+    add_derived_features,
+    get_per_sample_feature_cols,
+    aggregate_per_trader,
+    get_aggregated_feature_cols,
+)
 
 BASE_MODEL_CONFIGS = [
     {"max_depth": 1, "reg_alpha": 0.1, "reg_lambda": 2.0, "min_child_weight": 15, "random_state": 42},
@@ -57,95 +55,6 @@ BASE_MODEL_CONFIGS = [
 
 META_LEARNER_ALPHA = 0.0025
 META_LEARNER_L1_RATIO = 0.75
-
-
-def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add cross-sectional normalization, rank, and momentum features."""
-    # Handle inf in raw features
-    for col in FEATURE_COLUMNS:
-        fm = np.isfinite(df[col])
-        if (~fm).any() and fm.any():
-            cap = max(float(df.loc[fm, col].quantile(0.95)), 10.0)
-            df.loc[~fm, col] = cap
-    df[FEATURE_COLUMNS] = df[FEATURE_COLUMNS].fillna(0.0)
-
-    # Winsorize target
-    lo = float(df["forward_pnl_7d"].quantile(0.05))
-    hi = float(df["forward_pnl_7d"].quantile(0.95))
-    df["forward_pnl_7d"] = df["forward_pnl_7d"].clip(lo, hi)
-
-    # Demean target within window
-    wm = df.groupby("window_date")["forward_pnl_7d"].transform("mean")
-    df["target_dm"] = df["forward_pnl_7d"] - wm
-
-    # Cross-sectional z-score and rank features
-    for col in FEATURE_COLUMNS:
-        m = df.groupby("window_date")[col].transform("mean")
-        s = df.groupby("window_date")[col].transform("std")
-        df[f"{col}_dm"] = np.where(s > 0, (df[col] - m) / s, 0.0)
-        df[f"{col}_rank"] = df.groupby("window_date")[col].rank(pct=True)
-
-    # Momentum / interaction features
-    df["roi_momentum_7_30"] = df["roi_7d"] - df["roi_30d"]
-    df["roi_momentum_30_90"] = df["roi_30d"] - df["roi_90d"]
-    df["pnl_momentum_7_30"] = df["pnl_7d"] - df["pnl_30d"]
-    df["wr_x_pf"] = df["win_rate"] * np.clip(df["profit_factor"], 0, 50)
-    df["sharpe_x_wr"] = df["pseudo_sharpe"] * df["win_rate"]
-    df["roi7_x_rec"] = df["roi_7d"] * df["recency_decay"]
-
-    for col in EXTRA_RAW_FEATURES:
-        m = df.groupby("window_date")[col].transform("mean")
-        s = df.groupby("window_date")[col].transform("std")
-        df[f"{col}_dm"] = np.where(s > 0, (df[col] - m) / s, 0.0)
-        df[f"{col}_rank"] = df.groupby("window_date")[col].rank(pct=True)
-
-    return df
-
-
-def get_per_sample_feature_cols() -> list[str]:
-    """Return the list of per-sample feature column names."""
-    cols = []
-    for c in FEATURE_COLUMNS:
-        cols.append(f"{c}_dm")
-        cols.append(f"{c}_rank")
-    for c in EXTRA_RAW_FEATURES:
-        cols.append(f"{c}_dm")
-        cols.append(f"{c}_rank")
-    return cols
-
-
-def aggregate_per_trader(
-    df: pd.DataFrame,
-    feature_cols: list[str],
-    target_col: str = "target_dm",
-    min_windows: int = 10,
-) -> pd.DataFrame:
-    """Aggregate per-trader: mean + trend for each feature."""
-    results = []
-    for addr, group in df.groupby("address"):
-        if len(group) < min_windows:
-            continue
-        group = group.sort_values("window_date")
-        n = len(group)
-        row = {"address": addr, "n_windows": n}
-        for col in feature_cols:
-            vals = group[col].values
-            row[f"{col}_mean"] = vals.mean()
-            k = max(1, n // 3)
-            row[f"{col}_trend"] = vals[-k:].mean() - vals[:k].mean()
-        row[target_col] = group[target_col].values.mean()
-        results.append(row)
-    return pd.DataFrame(results)
-
-
-def get_aggregated_feature_cols(per_sample_cols: list[str]) -> list[str]:
-    """Return the list of aggregated feature column names (mean + trend + n_windows)."""
-    cols = []
-    for c in per_sample_cols:
-        cols.append(f"{c}_mean")
-        cols.append(f"{c}_trend")
-    cols.append("n_windows")
-    return cols
 
 
 def train_stacked_model(
