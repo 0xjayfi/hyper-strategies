@@ -275,6 +275,47 @@ def _map_score_to_db_schema(score_dict: dict, is_eligible: bool) -> dict:
     }
 
 
+def save_daily_score_snapshot(datastore: DataStore, snapshot_date=None) -> None:
+    """Save a daily snapshot of all trader scores for content pipeline comparison.
+
+    Reads the latest scores from trader_scores, ranks them by final_score,
+    and stores one row per trader in score_snapshots.
+    """
+    from datetime import date as _date
+
+    if snapshot_date is None:
+        snapshot_date = datetime.now(timezone.utc).date()
+
+    scores = datastore.get_latest_scores()
+    if not scores:
+        logger.info("No scores to snapshot")
+        return
+
+    ranked = sorted(scores.items(), key=lambda x: x[1]["final_score"], reverse=True)
+
+    for rank, (address, score_data) in enumerate(ranked, start=1):
+        label = datastore.get_trader_label(address)
+        is_smart = bool(
+            label and ("smart" in label.lower() or "fund" in label.lower())
+        )
+
+        datastore.insert_score_snapshot(
+            snapshot_date=snapshot_date,
+            trader_id=address,
+            rank=rank,
+            composite_score=score_data["final_score"],
+            growth_score=score_data.get("normalized_roi", 0.0),
+            drawdown_score=score_data.get("normalized_sharpe", 0.0),
+            leverage_score=score_data.get("normalized_win_rate", 0.0),
+            liq_distance_score=score_data.get("risk_management_score", 0.0),
+            diversity_score=score_data.get("style_multiplier", 0.0),
+            consistency_score=score_data.get("consistency_score", 0.0),
+            smart_money=is_smart,
+        )
+
+    logger.info("Saved daily score snapshot: %d traders for %s", len(ranked), snapshot_date)
+
+
 async def run_scheduler(
     nansen_client: NansenClient,
     datastore: DataStore,
@@ -371,6 +412,12 @@ async def run_scheduler(
                     last_leaderboard_refresh = now
                 except Exception as e:
                     logger.error(f"Leaderboard refresh failed: {e}")
+
+                # Daily score snapshot for content pipeline
+                try:
+                    save_daily_score_snapshot(datastore)
+                except Exception as e:
+                    logger.error(f"Daily score snapshot failed: {e}")
 
             # Daily cleanup tasks
             if last_cleanup is None or (now - last_cleanup) >= timedelta(days=1):

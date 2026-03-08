@@ -58,3 +58,60 @@ class TestScoreSnapshots:
             )
         rows = ds.get_score_snapshots_for_date(date(2026, 3, 7))
         assert len(rows) == 2
+
+
+from datetime import datetime, timezone
+from src.scheduler import save_daily_score_snapshot
+
+
+class TestDailyScoreSnapshot:
+
+    def test_save_snapshot_from_scores(self, ds):
+        ds.upsert_trader("0xAAA", label="Smart Trader")
+        ds.upsert_trader("0xBBB", label="Regular")
+
+        ds.insert_score("0xAAA", {
+            "normalized_roi": 0.72,
+            "normalized_sharpe": 0.99,
+            "normalized_win_rate": 0.85,
+            "consistency_score": 0.60,
+            "smart_money_bonus": 1.08,
+            "risk_management_score": 1.00,
+            "style_multiplier": 0.88,
+            "recency_decay": 1.0,
+            "raw_composite_score": 0.80,
+            "final_score": 0.80,
+            "roi_tier_multiplier": 1.0,
+            "passes_anti_luck": 1,
+        })
+        ds.insert_score("0xBBB", {
+            "normalized_roi": 0.50,
+            "normalized_sharpe": 0.60,
+            "normalized_win_rate": 0.70,
+            "consistency_score": 0.40,
+            "smart_money_bonus": 1.0,
+            "risk_management_score": 0.80,
+            "style_multiplier": 0.50,
+            "recency_decay": 0.90,
+            "raw_composite_score": 0.55,
+            "final_score": 0.55,
+            "roi_tier_multiplier": 1.0,
+            "passes_anti_luck": 1,
+        })
+
+        today = date(2026, 3, 8)
+        save_daily_score_snapshot(ds, today)
+
+        rows = ds.get_score_snapshots_for_date(today)
+        assert len(rows) == 2
+        assert rows[0]["trader_id"] == "0xAAA"
+        assert rows[0]["rank"] == 1
+        assert rows[0]["composite_score"] == 0.80
+        assert rows[1]["trader_id"] == "0xBBB"
+        assert rows[1]["rank"] == 2
+
+    def test_save_snapshot_empty_scores(self, ds):
+        """No scores means no snapshot rows."""
+        save_daily_score_snapshot(ds, date(2026, 3, 8))
+        rows = ds.get_score_snapshots_for_date(date(2026, 3, 8))
+        assert rows == []
