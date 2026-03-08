@@ -154,6 +154,22 @@ class DataStore:
                 account_value   REAL
             );
 
+            CREATE TABLE IF NOT EXISTS score_snapshots (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_date       TEXT NOT NULL,
+                trader_id           TEXT NOT NULL,
+                rank                INTEGER NOT NULL,
+                composite_score     REAL NOT NULL,
+                growth_score        REAL,
+                drawdown_score      REAL,
+                leverage_score      REAL,
+                liq_distance_score  REAL,
+                diversity_score     REAL,
+                consistency_score   REAL,
+                smart_money         INTEGER DEFAULT 0,
+                UNIQUE(snapshot_date, trader_id)
+            );
+
             -- Indexes
             CREATE INDEX IF NOT EXISTS idx_leaderboard_address
                 ON leaderboard_snapshots(address);
@@ -179,6 +195,8 @@ class DataStore:
                 ON position_snapshots(captured_at);
             CREATE INDEX IF NOT EXISTS idx_positions_token
                 ON position_snapshots(address, token_symbol);
+            CREATE INDEX IF NOT EXISTS idx_score_snapshots_date
+                ON score_snapshots(snapshot_date);
             """
         )
 
@@ -433,6 +451,62 @@ class DataStore:
             "SELECT MAX(computed_at) FROM trader_scores"
         ).fetchone()
         return row[0] if row and row[0] else None
+
+    # ------------------------------------------------------------------
+    # Score snapshots (for content pipeline)
+    # ------------------------------------------------------------------
+
+    def insert_score_snapshot(
+        self,
+        snapshot_date,
+        trader_id: str,
+        rank: int,
+        composite_score: float,
+        growth_score: float,
+        drawdown_score: float,
+        leverage_score: float,
+        liq_distance_score: float,
+        diversity_score: float,
+        consistency_score: float,
+        smart_money: bool,
+    ) -> None:
+        """Insert or replace a daily score snapshot for a trader."""
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO score_snapshots
+                (snapshot_date, trader_id, rank, composite_score,
+                 growth_score, drawdown_score, leverage_score,
+                 liq_distance_score, diversity_score, consistency_score,
+                 smart_money)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot_date.isoformat() if hasattr(snapshot_date, 'isoformat') else str(snapshot_date),
+                trader_id,
+                rank,
+                composite_score,
+                growth_score,
+                drawdown_score,
+                leverage_score,
+                liq_distance_score,
+                diversity_score,
+                consistency_score,
+                1 if smart_money else 0,
+            ),
+        )
+        self._conn.commit()
+
+    def get_score_snapshots_for_date(self, snapshot_date) -> list[dict]:
+        """Return all score snapshot rows for a given date."""
+        rows = self._conn.execute(
+            """
+            SELECT * FROM score_snapshots
+             WHERE snapshot_date = ?
+             ORDER BY rank ASC
+            """,
+            (snapshot_date.isoformat() if hasattr(snapshot_date, 'isoformat') else str(snapshot_date),),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Allocations
