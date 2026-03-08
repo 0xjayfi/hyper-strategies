@@ -119,7 +119,6 @@ class TestDailyScoreSnapshot:
 
 
 from src.content_pipeline import detect_score_movers, generate_content_payload
-from src.chart_generator import generate_charts
 
 
 class TestDetectScoreMovers:
@@ -239,7 +238,7 @@ class TestGenerateContentPayload:
 class TestFullPipelineIntegration:
 
     def test_end_to_end_payload_generation(self, ds, tmp_path):
-        """Full pipeline: seed data -> detect movers -> generate payload -> generate charts."""
+        """Full pipeline: seed data -> detect movers -> generate payload."""
         # Seed traders
         ds.upsert_trader("0xAAA", label="Smart Trader")
         ds.upsert_trader("0xBBB", label="Token Millionaire")
@@ -278,13 +277,3 @@ class TestFullPipelineIntegration:
         assert payload["post_worthy"] is True
         assert payload["wallet"]["address"] in ("0xBBB", "0xAAA")
         assert payload["change"]["score_delta"] is not None
-
-        # Generate charts from the payload
-        chart_dir = str(tmp_path / "charts")
-        chart_paths = generate_charts(payload, output_dir=chart_dir, count=2)
-        assert len(chart_paths) >= 1
-        for p in chart_paths:
-            path = Path(p)
-            assert path.exists()
-            assert path.suffix == ".png"
-            assert path.stat().st_size > 1000  # Not an empty/trivial image

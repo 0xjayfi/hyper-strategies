@@ -1,7 +1,7 @@
 """Dashboard screenshot capture for wallet spotlight posts.
 
 Uses Playwright to take headless screenshots of the live Vercel dashboard.
-Replaces the matplotlib chart_generator with real dashboard visuals.
+Replaces the old matplotlib charts with real dashboard visuals.
 """
 from __future__ import annotations
 
