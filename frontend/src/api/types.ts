@@ -132,6 +132,14 @@ export interface TraderDetailResponse {
   allocation_weight: number | null;
   anti_luck_status: { passed: boolean; failures: string[] } | null;
   is_blacklisted: boolean;
+
+  // Position-based score components (6 axes for radar chart)
+  score_growth?: number | null;
+  score_drawdown?: number | null;
+  score_leverage?: number | null;
+  score_liq_distance?: number | null;
+  score_diversity?: number | null;
+  score_consistency?: number | null;
 }
 
 export interface TradeItem {

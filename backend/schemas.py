@@ -301,6 +301,14 @@ class TraderDetailResponse(BaseModel):
     anti_luck_status: AntiLuckStatus | None = None
     is_blacklisted: bool = False
 
+    # Position-based score components (6 axes for radar chart)
+    score_growth: float | None = None
+    score_drawdown: float | None = None
+    score_leverage: float | None = None
+    score_liq_distance: float | None = None
+    score_diversity: float | None = None
+    score_consistency: float | None = None
+
 
 class TradeItem(BaseModel):
     """A single trade entry for the trades endpoint."""

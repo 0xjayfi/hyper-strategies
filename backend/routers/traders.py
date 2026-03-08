@@ -162,6 +162,22 @@ async def get_trader_detail(
             ),
         }
 
+    # Position-based score components (6 axes) — same mapping as leaderboard
+    score_growth: float | None = None
+    score_drawdown: float | None = None
+    score_leverage: float | None = None
+    score_liq_distance: float | None = None
+    score_diversity: float | None = None
+    score_consistency: float | None = None
+    raw_score = datastore.get_latest_score(address) if not MOCK_STRATEGY_DATA else None
+    if raw_score:
+        score_growth = raw_score.get("normalized_roi")
+        score_drawdown = raw_score.get("normalized_sharpe")
+        score_leverage = raw_score.get("normalized_win_rate")
+        score_liq_distance = raw_score.get("risk_management_score")
+        score_diversity = raw_score.get("style_multiplier")
+        score_consistency = raw_score.get("consistency_score")
+
     response = TraderDetailResponse(
         address=address,
         label=label,
@@ -174,6 +190,12 @@ async def get_trader_detail(
         allocation_weight=allocation_weight,
         anti_luck_status=anti_luck,
         is_blacklisted=is_blacklisted,
+        score_growth=score_growth,
+        score_drawdown=score_drawdown,
+        score_leverage=score_leverage,
+        score_liq_distance=score_liq_distance,
+        score_diversity=score_diversity,
+        score_consistency=score_consistency,
     )
 
     cache.set(cache_key, response, ttl=CACHE_TTL_TRADER)

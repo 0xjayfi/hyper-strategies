@@ -9,6 +9,7 @@ import { TraderHeader } from '../components/trader/TraderHeader';
 import { PnlCurveChart } from '../components/trader/PnlCurveChart';
 import { TradeHistoryTable } from '../components/trader/TradeHistoryTable';
 import { ScoreBreakdown } from '../components/trader/ScoreBreakdown';
+import { ScoreRadarChart } from '../components/leaderboard/ScoreRadarChart';
 import { AllocationHistory } from '../components/trader/AllocationHistory';
 import { SideBadge } from '../components/shared/SideBadge';
 import { TokenBadge } from '../components/shared/TokenBadge';
@@ -161,12 +162,29 @@ export function TraderDeepDive() {
           <PnlCurveChart points={pnlData.points} />
         ) : null}
 
-        {/* Score + Allocation side by side */}
+        {/* Radar + Score + Allocation */}
         {trader && (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <ScoreBreakdown breakdown={trader.score_breakdown} />
-            <AllocationHistory address={address} currentWeight={trader.allocation_weight} />
-          </div>
+          <>
+            {/* Radar chart — full width for visual impact */}
+            {trader.score_growth != null && (
+              <ScoreRadarChart
+                scoreBreakdown={{
+                  growth: trader.score_growth ?? 0,
+                  drawdown: trader.score_drawdown ?? 0,
+                  leverage: trader.score_leverage ?? 0,
+                  liq_distance: trader.score_liq_distance ?? 0,
+                  diversity: trader.score_diversity ?? 0,
+                  consistency: trader.score_consistency ?? 0,
+                }}
+              />
+            )}
+
+            {/* Score breakdown + Allocation side by side */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <ScoreBreakdown breakdown={trader.score_breakdown} />
+              <AllocationHistory address={address} currentWeight={trader.allocation_weight} />
+            </div>
+          </>
         )}
 
         {/* Trade History */}
