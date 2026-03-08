@@ -32,12 +32,12 @@ if ! grep -q '"post_worthy": true' data/content_payload.json; then
     exit 0
 fi
 
-echo "[$(date -u)] Post-worthy content detected. Generating charts..."
+echo "[$(date -u)] Post-worthy content detected. Capturing dashboard screenshots..."
 
-# Step 3: Generate charts
-python -m src.chart_generator
+# Step 3: Capture dashboard screenshots
+python -m src.screenshot_capture
 
-echo "[$(date -u)] Charts generated. Launching Claude Code writer team..."
+echo "[$(date -u)] Screenshots captured. Launching Claude Code writer team..."
 
 # Step 4: Launch Claude Code to write and push to Typefully
 /home/jsong407/.local/bin/claude --dangerously-skip-permissions -p scripts/content-prompt.md
