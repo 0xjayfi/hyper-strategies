@@ -110,3 +110,11 @@ NANSEN_RATE_LIMIT_TRADE_STATE_FILE: str = "/tmp/pnl_weighted_rate_trade.json"
 POSITION_MIN_SNAPSHOTS = 48
 POSITION_MIN_GROWTH = 0.0
 POSITION_MAX_LEVERAGE = 25.0
+
+# ---------------------------------------------------------------------------
+# Content pipeline
+# ---------------------------------------------------------------------------
+
+CONTENT_MIN_RANK_CHANGE = 2       # Minimum rank positions moved to trigger
+CONTENT_MIN_SCORE_DELTA = 0.10    # Minimum composite score change to trigger
+CONTENT_TOP_N = 5                 # Track entry/exit from top N

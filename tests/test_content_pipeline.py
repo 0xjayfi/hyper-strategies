@@ -115,3 +115,120 @@ class TestDailyScoreSnapshot:
         save_daily_score_snapshot(ds, date(2026, 3, 8))
         rows = ds.get_score_snapshots_for_date(date(2026, 3, 8))
         assert rows == []
+
+
+from src.content_pipeline import detect_score_movers, generate_content_payload
+
+
+class TestDetectScoreMovers:
+
+    def _seed_two_days(self, ds):
+        """Seed snapshots for day1 and day2 with a rank change."""
+        ds.upsert_trader("0xAAA", label="Smart Trader")
+        ds.upsert_trader("0xBBB", label="Token Millionaire")
+        ds.upsert_trader("0xCCC", label="Whale")
+
+        for addr, rank, score in [
+            ("0xAAA", 1, 0.80), ("0xBBB", 2, 0.65), ("0xCCC", 3, 0.50),
+        ]:
+            ds.insert_score_snapshot(
+                snapshot_date=date(2026, 3, 7),
+                trader_id=addr, rank=rank, composite_score=score,
+                growth_score=0.5, drawdown_score=0.5, leverage_score=0.5,
+                liq_distance_score=0.5, diversity_score=0.5,
+                consistency_score=0.5, smart_money=False,
+            )
+
+        for addr, rank, score, growth in [
+            ("0xBBB", 1, 0.85, 0.90),
+            ("0xCCC", 2, 0.70, 0.60),
+            ("0xAAA", 3, 0.55, 0.30),
+        ]:
+            ds.insert_score_snapshot(
+                snapshot_date=date(2026, 3, 8),
+                trader_id=addr, rank=rank, composite_score=score,
+                growth_score=growth, drawdown_score=0.5, leverage_score=0.5,
+                liq_distance_score=0.5, diversity_score=0.5,
+                consistency_score=0.5, smart_money=False,
+            )
+
+    def test_detects_rank_mover(self, ds):
+        self._seed_two_days(ds)
+        movers = detect_score_movers(
+            ds, today=date(2026, 3, 8), yesterday=date(2026, 3, 7),
+        )
+        assert len(movers) >= 1
+        addresses = [m["address"] for m in movers]
+        assert "0xAAA" in addresses
+
+    def test_detects_score_delta_mover(self, ds):
+        self._seed_two_days(ds)
+        movers = detect_score_movers(
+            ds, today=date(2026, 3, 8), yesterday=date(2026, 3, 7),
+            min_score_delta=0.10,
+        )
+        addresses = [m["address"] for m in movers]
+        assert "0xBBB" in addresses
+        assert "0xAAA" in addresses
+
+    def test_no_movers_when_stable(self, ds):
+        ds.upsert_trader("0xAAA", label="Stable")
+        for d in [date(2026, 3, 7), date(2026, 3, 8)]:
+            ds.insert_score_snapshot(
+                snapshot_date=d, trader_id="0xAAA", rank=1,
+                composite_score=0.80,
+                growth_score=0.5, drawdown_score=0.5, leverage_score=0.5,
+                liq_distance_score=0.5, diversity_score=0.5,
+                consistency_score=0.5, smart_money=False,
+            )
+        movers = detect_score_movers(
+            ds, today=date(2026, 3, 8), yesterday=date(2026, 3, 7),
+        )
+        assert movers == []
+
+
+class TestGenerateContentPayload:
+
+    def test_generates_payload_for_top_mover(self, ds):
+        ds.upsert_trader("0xBBB", label="Token Millionaire")
+        ds.upsert_trader("0xAAA", label="Smart Trader")
+        for addr, rank, score in [("0xAAA", 1, 0.80), ("0xBBB", 2, 0.65)]:
+            ds.insert_score_snapshot(
+                snapshot_date=date(2026, 3, 7), trader_id=addr,
+                rank=rank, composite_score=score,
+                growth_score=0.5, drawdown_score=0.5, leverage_score=0.5,
+                liq_distance_score=0.5, diversity_score=0.5,
+                consistency_score=0.5, smart_money=False,
+            )
+        for addr, rank, score in [("0xBBB", 1, 0.85), ("0xAAA", 2, 0.55)]:
+            ds.insert_score_snapshot(
+                snapshot_date=date(2026, 3, 8), trader_id=addr,
+                rank=rank, composite_score=score,
+                growth_score=0.9, drawdown_score=0.5, leverage_score=0.5,
+                liq_distance_score=0.5, diversity_score=0.5,
+                consistency_score=0.5, smart_money=False,
+            )
+
+        payload = generate_content_payload(
+            ds, today=date(2026, 3, 8), yesterday=date(2026, 3, 7),
+        )
+        assert payload["post_worthy"] is True
+        assert payload["wallet"]["address"] in ("0xBBB", "0xAAA")
+        assert "change" in payload
+        assert "top_movers" in payload
+        assert "context" in payload
+
+    def test_not_post_worthy_when_no_movers(self, ds):
+        ds.upsert_trader("0xAAA", label="Stable")
+        for d in [date(2026, 3, 7), date(2026, 3, 8)]:
+            ds.insert_score_snapshot(
+                snapshot_date=d, trader_id="0xAAA", rank=1,
+                composite_score=0.80,
+                growth_score=0.5, drawdown_score=0.5, leverage_score=0.5,
+                liq_distance_score=0.5, diversity_score=0.5,
+                consistency_score=0.5, smart_money=False,
+            )
+        payload = generate_content_payload(
+            ds, today=date(2026, 3, 8), yesterday=date(2026, 3, 7),
+        )
+        assert payload["post_worthy"] is False
