@@ -4,7 +4,7 @@
  * Browse individual perpetual positions for a selected token, with filters
  * for side (Long/Short) and smart money only.
  *
- * Data source: Live Nansen API (cached server-side for 5 min).
+ * Data source: Live Nansen API (cached server-side for 4 hours).
  *   GET /api/v1/positions?token=X&side=Y&label_type=Z
  *   ->  backend/routers/positions.py
  *

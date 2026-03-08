@@ -7,7 +7,7 @@
  * Data source: Dual-source (SQLite DB preferred, Nansen API fallback).
  *   GET /api/v1/leaderboard  ->  backend/routers/leaderboard.py
  *
- * Auto-refresh: every 1 hour (5 min stale time).
+ * Auto-refresh: every 1 hour (5 min stale time). Scores recomputed every 12 hours.
  */
 import { useState } from 'react';
 import { useLeaderboard } from '../api/hooks';
@@ -47,7 +47,7 @@ export function TraderLeaderboard() {
   return (
     <PageLayout
       title="Trader Leaderboard"
-      description="Top traders ranked by a 6-component position-based score: account growth, drawdown control, leverage discipline, liquidation safety, portfolio diversity, and consistency. Traders must pass eligibility gates to receive allocation weights. Data is cached for up to 1 hour. Click the sync icon to force a fresh fetch."
+      description="Top traders ranked by a 6-component position-based score: account growth, drawdown control, leverage discipline, liquidation safety, portfolio diversity, and consistency. Traders must pass eligibility gates to receive allocation weights. Scores are recomputed every 12 hours. API responses are cached for up to 1 hour. Click the sync icon to force a fresh fetch."
       lastUpdated={lastUpdated}
       onRefresh={() => hardRefresh()}
       isRefreshing={isFetching}
