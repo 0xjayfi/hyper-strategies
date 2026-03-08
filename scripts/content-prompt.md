@@ -9,7 +9,10 @@ Read these files:
 - `x_writer/writing_style.md` — voice rules (DO's and DON'Ts)
 - `x_writer/studied_x_writiing_styles.md` — Cryptor reference posts (the target voice)
 
-Also list the PNG files in `data/charts/` to know what visuals are available.
+Also list the PNG files in `data/charts/` to see the dashboard screenshots available. These are real screenshots from the live dashboard, not generated charts. The files are:
+- `leaderboard_top5.png` — Top 5 traders on the leaderboard
+- `trader_radar.png` — The spotlight wallet's 6-dimension radar chart
+- `trader_positions.png` — The spotlight wallet's header, metrics, and current positions
 
 ## Step 2: Pick a random style variation
 
@@ -49,11 +52,11 @@ Rules:
 - Follow every rule in writing_style.md (no em dashes, no banned phrases, no report tone)
 - Mention @nansen_ai naturally when referencing the data
 
-Also decide which chart files from data/charts/ should attach to which tweet.
+Also decide which dashboard screenshots from data/charts/ should attach to which tweet. These are real screenshots from the live dashboard. Attach the most relevant ones — typically trader_positions.png with the position-focused tweet and trader_radar.png or leaderboard_top5.png with the score/ranking tweet.
 
 Output the draft as JSON:
 ```json
-{"tweets": [{"text": "...", "chart": "filename.png or null"}], "style_used": "..."}
+{"tweets": [{"text": "...", "screenshot": "filename.png or null"}], "style_used": "..."}
 ```
 
 ### Agent 2: CT Editor
@@ -106,7 +109,7 @@ Cross-check every claim in the thread against the payload data:
 - Are dimension changes described in the correct direction? (e.g. "dropped" when it actually dropped)
 - Is the wallet's FULL address (complete 0x hex string) shown in the first tweet?
 - Is the wallet address/label correct?
-- Are the chart filenames valid (exist in data/charts/)?
+- Are the screenshot filenames valid? Expected files: leaderboard_top5.png, trader_radar.png, trader_positions.png
 - Does the context/background accurately describe what the scoring system does?
 - Is the @nansen_ai mention present?
 - Are current positions accurately described? Check token, side (Long/Short), position value, entry price, leverage, and uPnL against the `current_positions` array in the payload. Numbers should be rounded reasonably but not fabricated.
