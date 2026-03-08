@@ -2,6 +2,7 @@
 
 import pytest
 from datetime import date
+from pathlib import Path
 from src.datastore import DataStore
 
 
@@ -118,6 +119,7 @@ class TestDailyScoreSnapshot:
 
 
 from src.content_pipeline import detect_score_movers, generate_content_payload
+from src.chart_generator import generate_charts
 
 
 class TestDetectScoreMovers:
@@ -232,3 +234,57 @@ class TestGenerateContentPayload:
             ds, today=date(2026, 3, 8), yesterday=date(2026, 3, 7),
         )
         assert payload["post_worthy"] is False
+
+
+class TestFullPipelineIntegration:
+
+    def test_end_to_end_payload_generation(self, ds, tmp_path):
+        """Full pipeline: seed data -> detect movers -> generate payload -> generate charts."""
+        # Seed traders
+        ds.upsert_trader("0xAAA", label="Smart Trader")
+        ds.upsert_trader("0xBBB", label="Token Millionaire")
+        ds.upsert_trader("0xCCC", label="Whale")
+
+        # Day 1 snapshots
+        for addr, rank, score in [
+            ("0xAAA", 1, 0.80), ("0xBBB", 2, 0.65), ("0xCCC", 3, 0.50),
+        ]:
+            ds.insert_score_snapshot(
+                snapshot_date=date(2026, 3, 7), trader_id=addr,
+                rank=rank, composite_score=score,
+                growth_score=0.5, drawdown_score=0.5, leverage_score=0.5,
+                liq_distance_score=0.5, diversity_score=0.5,
+                consistency_score=0.5, smart_money=False,
+            )
+
+        # Day 2 snapshots with a big mover
+        for addr, rank, score, growth in [
+            ("0xBBB", 1, 0.85, 0.90),
+            ("0xCCC", 2, 0.70, 0.60),
+            ("0xAAA", 3, 0.55, 0.30),
+        ]:
+            ds.insert_score_snapshot(
+                snapshot_date=date(2026, 3, 8), trader_id=addr,
+                rank=rank, composite_score=score,
+                growth_score=growth, drawdown_score=0.5, leverage_score=0.5,
+                liq_distance_score=0.5, diversity_score=0.5,
+                consistency_score=0.5, smart_money=False,
+            )
+
+        # Generate payload
+        payload = generate_content_payload(
+            ds, today=date(2026, 3, 8), yesterday=date(2026, 3, 7),
+        )
+        assert payload["post_worthy"] is True
+        assert payload["wallet"]["address"] in ("0xBBB", "0xAAA")
+        assert payload["change"]["score_delta"] is not None
+
+        # Generate charts from the payload
+        chart_dir = str(tmp_path / "charts")
+        chart_paths = generate_charts(payload, output_dir=chart_dir, count=2)
+        assert len(chart_paths) >= 1
+        for p in chart_paths:
+            path = Path(p)
+            assert path.exists()
+            assert path.suffix == ".png"
+            assert path.stat().st_size > 1000  # Not an empty/trivial image
