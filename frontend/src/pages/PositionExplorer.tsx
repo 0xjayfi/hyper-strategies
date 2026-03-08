@@ -57,7 +57,7 @@ export function PositionExplorer() {
   return (
     <PageLayout
       title="Position Explorer"
-      description="Browse individual perpetual positions for any token. Filter by direction (Long/Short) and smart money traders. See position sizes, entry prices, and leverage across the market. Data is cached for up to 4 hours. Click the sync icon to force a fresh fetch from the Nansen API."
+      description="Browse individual perpetual positions for any token. Filter by direction (Long/Short) and smart money traders. See position sizes, entry prices, and leverage across the market. Data is fetched live from the Nansen API and cached for up to 4 hours. Click the sync icon to force a fresh fetch."
       lastUpdated={lastUpdated}
       onRefresh={() => hardRefresh()}
       isRefreshing={isFetching}

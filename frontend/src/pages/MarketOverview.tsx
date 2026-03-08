@@ -43,7 +43,7 @@ export function MarketOverview() {
   return (
     <PageLayout
       title="Market Overview"
-      description="Live snapshot of smart money activity across BTC, ETH, SOL, and HYPE. See which direction the smart money is leaning, with consensus signals and aggregate flow data. Data is cached for up to 4 hours. Click the sync icon to force a fresh fetch from the Nansen API."
+      description="Live snapshot of smart money activity across BTC, ETH, SOL, and HYPE. See which direction the smart money is leaning, with consensus signals and aggregate flow data. Data is fetched live from the Nansen API and cached for up to 4 hours. Click the sync icon to force a fresh fetch."
       lastUpdated={lastUpdated}
       onRefresh={() => hardRefresh()}
       isRefreshing={isFetching}
