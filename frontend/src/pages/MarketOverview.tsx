@@ -54,7 +54,7 @@ export function MarketOverview() {
         ) : isError ? (
           <ErrorState
             message={error instanceof Error ? error.message : 'Failed to load market data'}
-            onRetry={() => refetch()}
+            onRetry={() => hardRefresh()}
           />
         ) : !data || data.tokens.length === 0 ? (
           <EmptyState message="No market data available" />
