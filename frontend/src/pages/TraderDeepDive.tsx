@@ -139,7 +139,7 @@ export function TraderDeepDive() {
             onRetry={() => refetch()}
           />
         ) : trader ? (
-          <>
+          <div data-testid="trader-overview">
             <TraderHeader trader={trader} />
 
             {/* Metrics */}
@@ -147,7 +147,7 @@ export function TraderDeepDive() {
 
             {/* Positions */}
             <PositionsTable positions={trader.positions} />
-          </>
+          </div>
         ) : null}
 
         {/* PnL Curve */}
@@ -167,16 +167,18 @@ export function TraderDeepDive() {
           <>
             {/* Radar chart — full width for visual impact */}
             {trader.score_growth != null && (
-              <ScoreRadarChart
-                scoreBreakdown={{
-                  growth: trader.score_growth ?? 0,
-                  drawdown: trader.score_drawdown ?? 0,
-                  leverage: trader.score_leverage ?? 0,
-                  liq_distance: trader.score_liq_distance ?? 0,
-                  diversity: trader.score_diversity ?? 0,
-                  consistency: trader.score_consistency ?? 0,
-                }}
-              />
+              <div data-testid="trader-radar">
+                <ScoreRadarChart
+                  scoreBreakdown={{
+                    growth: trader.score_growth ?? 0,
+                    drawdown: trader.score_drawdown ?? 0,
+                    leverage: trader.score_leverage ?? 0,
+                    liq_distance: trader.score_liq_distance ?? 0,
+                    diversity: trader.score_diversity ?? 0,
+                    consistency: trader.score_consistency ?? 0,
+                  }}
+                />
+              </div>
             )}
 
             {/* Score breakdown + Allocation side by side */}

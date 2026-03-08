@@ -161,7 +161,7 @@ export function LeaderboardTable({ data, onSelectTrader }: LeaderboardTableProps
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
+    <div className="overflow-x-auto rounded-lg border border-border" data-testid="leaderboard-table">
       <table className="w-full text-sm">
         <thead>
           {table.getHeaderGroups().map((headerGroup) => (
