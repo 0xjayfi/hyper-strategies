@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback } from 'react';
 import { apiClient } from './client';
 import type {
   PositionResponse,
@@ -24,103 +25,193 @@ export interface PositionFilters {
   limit?: number;
 }
 
+/**
+ * Helper: returns the standard query result plus a `hardRefresh` function
+ * that busts the server-side cache before refetching.
+ */
+function useHardRefresh<T>(queryKey: readonly unknown[], fetchFn: (bustCache?: boolean) => Promise<T>) {
+  const queryClient = useQueryClient();
+  const hardRefresh = useCallback(() => {
+    // Replace the queryFn temporarily to include bust_cache=true,
+    // then refetch, then restore the normal queryFn.
+    queryClient.fetchQuery({
+      queryKey,
+      queryFn: () => fetchFn(true),
+      staleTime: 0,
+    });
+  }, [queryClient, queryKey, fetchFn]);
+  return hardRefresh;
+}
+
 export function usePositions(filters: PositionFilters) {
-  return useQuery({
-    queryKey: ['positions', filters],
-    queryFn: () => apiClient.get<PositionResponse>('/api/v1/positions', {
+  const queryKey = ['positions', filters] as const;
+  const fetchPositions = useCallback((bustCache?: boolean) =>
+    apiClient.get<PositionResponse>('/api/v1/positions', {
       token: filters.token,
       label_type: filters.label_type,
       side: filters.side,
       min_position_usd: filters.min_position_usd,
       limit: filters.limit,
-    }),
+      bust_cache: bustCache || undefined,
+    }), [filters]);
+
+  const query = useQuery({
+    queryKey,
+    queryFn: () => fetchPositions(),
     refetchInterval: REFRESH_INTERVALS.positions,
     staleTime: 60_000,
   });
+  const hardRefresh = useHardRefresh(queryKey, fetchPositions);
+  return { ...query, hardRefresh };
 }
 
 export function useMarketOverview() {
-  return useQuery({
-    queryKey: ['market-overview'],
-    queryFn: () => apiClient.get<MarketOverviewResponse>('/api/v1/market-overview'),
+  const queryKey = ['market-overview'] as const;
+  const fetchData = useCallback((bustCache?: boolean) =>
+    apiClient.get<MarketOverviewResponse>('/api/v1/market-overview', {
+      bust_cache: bustCache || undefined,
+    }), []);
+
+  const query = useQuery({
+    queryKey,
+    queryFn: () => fetchData(),
     refetchInterval: REFRESH_INTERVALS.positions,
     staleTime: 60_000,
   });
+  const hardRefresh = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh };
 }
 
 export function useLeaderboard() {
-  return useQuery({
-    queryKey: ['leaderboard'],
-    queryFn: () => apiClient.get<LeaderboardResponse>('/api/v1/leaderboard'),
+  const queryKey = ['leaderboard'] as const;
+  const fetchData = useCallback((bustCache?: boolean) =>
+    apiClient.get<LeaderboardResponse>('/api/v1/leaderboard', {
+      bust_cache: bustCache || undefined,
+    }), []);
+
+  const query = useQuery({
+    queryKey,
+    queryFn: () => fetchData(),
     refetchInterval: REFRESH_INTERVALS.leaderboard,
     staleTime: 5 * 60_000,
   });
+  const hardRefresh = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh };
 }
 
 export function useTrader(address: string) {
-  return useQuery({
-    queryKey: ['trader', address],
-    queryFn: () => apiClient.get<TraderDetailResponse>(`/api/v1/traders/${address}`),
+  const queryKey = ['trader', address] as const;
+  const fetchData = useCallback((bustCache?: boolean) =>
+    apiClient.get<TraderDetailResponse>(`/api/v1/traders/${address}`, {
+      bust_cache: bustCache || undefined,
+    }), [address]);
+
+  const query = useQuery({
+    queryKey,
+    queryFn: () => fetchData(),
     staleTime: 5 * 60_000,
     enabled: !!address,
   });
+  const hardRefresh = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh };
 }
 
 export function useTraderTrades(address: string, days: number = 30) {
-  return useQuery({
-    queryKey: ['trader-trades', address, days],
-    queryFn: () => apiClient.get<TradesResponse>(`/api/v1/traders/${address}/trades`, { days }),
+  const queryKey = ['trader-trades', address, days] as const;
+  const fetchData = useCallback((bustCache?: boolean) =>
+    apiClient.get<TradesResponse>(`/api/v1/traders/${address}/trades`, {
+      days, bust_cache: bustCache || undefined,
+    }), [address, days]);
+
+  const query = useQuery({
+    queryKey,
+    queryFn: () => fetchData(),
     staleTime: 5 * 60_000,
     enabled: !!address,
   });
+  const hardRefresh = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh };
 }
 
 export function useTraderPnlCurve(address: string, days: number = 90) {
-  return useQuery({
-    queryKey: ['trader-pnl-curve', address, days],
-    queryFn: () => apiClient.get<PnlCurveResponse>(`/api/v1/traders/${address}/pnl-curve`, { days }),
+  const queryKey = ['trader-pnl-curve', address, days] as const;
+  const fetchData = useCallback((bustCache?: boolean) =>
+    apiClient.get<PnlCurveResponse>(`/api/v1/traders/${address}/pnl-curve`, {
+      days, bust_cache: bustCache || undefined,
+    }), [address, days]);
+
+  const query = useQuery({
+    queryKey,
+    queryFn: () => fetchData(),
     staleTime: 5 * 60_000,
     enabled: !!address,
   });
+  const hardRefresh = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh };
 }
 
 export function useAllocations() {
-  return useQuery({
-    queryKey: ['allocations'],
-    queryFn: () => apiClient.get<AllocationsResponse>('/api/v1/allocations'),
+  const queryKey = ['allocations'] as const;
+  const fetchData = useCallback((bustCache?: boolean) =>
+    apiClient.get<AllocationsResponse>('/api/v1/allocations', {
+      bust_cache: bustCache || undefined,
+    }), []);
+
+  const query = useQuery({
+    queryKey,
+    queryFn: () => fetchData(),
     refetchInterval: REFRESH_INTERVALS.allocations,
     staleTime: 5 * 60_000,
   });
+  const hardRefresh = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh };
 }
 
 export function useAllocationHistory(days: number = 30) {
-  return useQuery({
-    queryKey: ['allocation-history', days],
+  const queryKey = ['allocation-history', days] as const;
+  const query = useQuery({
+    queryKey,
     queryFn: () => apiClient.get<AllocationHistoryResponse>('/api/v1/allocations/history', { days }),
     refetchInterval: REFRESH_INTERVALS.allocations,
     staleTime: 5 * 60_000,
   });
+  return query;
 }
 
 export function useAllocationStrategies() {
-  return useQuery({
-    queryKey: ['allocation-strategies'],
-    queryFn: () => apiClient.get<StrategiesResponse>('/api/v1/allocations/strategies'),
+  const queryKey = ['allocation-strategies'] as const;
+  const fetchData = useCallback((bustCache?: boolean) =>
+    apiClient.get<StrategiesResponse>('/api/v1/allocations/strategies', {
+      bust_cache: bustCache || undefined,
+    }), []);
+
+  const query = useQuery({
+    queryKey,
+    queryFn: () => fetchData(),
     refetchInterval: REFRESH_INTERVALS.allocations,
     staleTime: 5 * 60_000,
   });
+  const hardRefresh = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh };
 }
 
 export function useAssessment(address: string, windowDays: number = 30) {
-  return useQuery({
-    queryKey: ['assessment', address, windowDays],
-    queryFn: () => apiClient.get<AssessmentResponse>(`/api/v1/assess/${address}`, {
+  const queryKey = ['assessment', address, windowDays] as const;
+  const fetchData = useCallback((bustCache?: boolean) =>
+    apiClient.get<AssessmentResponse>(`/api/v1/assess/${address}`, {
       window_days: windowDays,
-    }),
+      bust_cache: bustCache || undefined,
+    }), [address, windowDays]);
+
+  const query = useQuery({
+    queryKey,
+    queryFn: () => fetchData(),
     staleTime: 5 * 60_000,
     enabled: !!address,
     retry: 1,
   });
+  const hardRefresh = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh };
 }
 
 export function useHealthCheck() {

@@ -37,15 +37,15 @@ import { usePageTitle } from '../hooks/usePageTitle';
 
 export function MarketOverview() {
   usePageTitle('Market Overview');
-  const { data, isLoading, isError, error, refetch, isFetching, dataUpdatedAt } = useMarketOverview();
+  const { data, isLoading, isError, error, hardRefresh, isFetching, dataUpdatedAt } = useMarketOverview();
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt).toISOString() : undefined;
 
   return (
     <PageLayout
       title="Market Overview"
-      description="Live snapshot of smart money activity across BTC, ETH, SOL, and HYPE. See which direction the smart money is leaning, with consensus signals and aggregate flow data. Auto-refreshes every 5 minutes."
+      description="Live snapshot of smart money activity across BTC, ETH, SOL, and HYPE. See which direction the smart money is leaning, with consensus signals and aggregate flow data. Data is cached for up to 4 hours. Click the sync icon to force a fresh fetch from the Nansen API."
       lastUpdated={lastUpdated}
-      onRefresh={() => refetch()}
+      onRefresh={() => hardRefresh()}
       isRefreshing={isFetching}
     >
       <div className="space-y-4 md:space-y-6">

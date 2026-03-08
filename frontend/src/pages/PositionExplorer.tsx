@@ -41,7 +41,7 @@ export function PositionExplorer() {
   const [side, setSide] = useState<Side | undefined>(undefined);
   const [smartMoneyOnly, setSmartMoneyOnly] = useState(false);
 
-  const { data, isLoading, isError, error, refetch, isFetching, dataUpdatedAt } = usePositions({
+  const { data, isLoading, isError, error, refetch, hardRefresh, isFetching, dataUpdatedAt } = usePositions({
     token,
     side,
     label_type: smartMoneyOnly ? 'smart_money' : undefined,
@@ -57,9 +57,9 @@ export function PositionExplorer() {
   return (
     <PageLayout
       title="Position Explorer"
-      description="Browse individual perpetual positions for any token. Filter by direction (Long/Short) and smart money traders. See position sizes, entry prices, and leverage across the market. Auto-refreshes every 5 minutes."
+      description="Browse individual perpetual positions for any token. Filter by direction (Long/Short) and smart money traders. See position sizes, entry prices, and leverage across the market. Data is cached for up to 4 hours. Click the sync icon to force a fresh fetch from the Nansen API."
       lastUpdated={lastUpdated}
-      onRefresh={() => refetch()}
+      onRefresh={() => hardRefresh()}
       isRefreshing={isFetching}
     >
       <div className="space-y-4">

@@ -35,6 +35,7 @@ ASSESS_STALENESS_HOURS = 30 * 24
 async def assess_trader(
     address: str,
     window_days: int = Query(default=30, ge=7, le=90),
+    bust_cache: bool = False,
     nansen_client: NansenClient = Depends(get_nansen_client),
     datastore: DataStore = Depends(get_datastore),
     cache: CacheLayer = Depends(get_cache),
@@ -44,6 +45,8 @@ async def assess_trader(
         raise HTTPException(status_code=400, detail="Invalid address format. Expected 0x followed by 40 hex characters.")
 
     cache_key = f"assess:{address}:{window_days}"
+    if bust_cache:
+        cache.invalidate(cache_key)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached

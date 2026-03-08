@@ -7,6 +7,11 @@ set -euo pipefail
 
 cd /home/jsong407/hyper-strategies-pnl-weighted
 
+# Load pyenv so the correct Python + virtualenv are on PATH
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"
+eval "$(pyenv init -)"
+
 # Load environment
 set -a
 source .env
@@ -35,6 +40,6 @@ python -m src.chart_generator
 echo "[$(date -u)] Charts generated. Launching Claude Code writer team..."
 
 # Step 4: Launch Claude Code to write and push to Typefully
-cldy -p scripts/content-prompt.md
+/home/jsong407/.local/bin/claude --dangerously-skip-permissions -p scripts/content-prompt.md
 
 echo "[$(date -u)] Content pipeline complete."

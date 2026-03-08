@@ -54,12 +54,15 @@ def _position_side(size_str: str) -> str:
 @router.get("/traders/{address}", response_model=TraderDetailResponse)
 async def get_trader_detail(
     address: str,
+    bust_cache: bool = False,
     nansen_client: NansenClient = Depends(get_nansen_client),
     datastore: DataStore = Depends(get_datastore),
     cache: CacheLayer = Depends(get_cache),
 ) -> TraderDetailResponse:
     """Return detailed information for a single trader."""
     cache_key = f"trader:{address}"
+    if bust_cache:
+        cache.invalidate(cache_key)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -182,11 +185,14 @@ async def get_trader_trades(
     address: str,
     days: int = Query(default=30, ge=1, le=365),
     limit: int = Query(default=100, ge=1, le=1000),
+    bust_cache: bool = False,
     nansen_client: NansenClient = Depends(get_nansen_client),
     cache: CacheLayer = Depends(get_cache),
 ) -> TradesResponse:
     """Return recent trades for a trader."""
     cache_key = f"trades:{address}:{days}"
+    if bust_cache:
+        cache.invalidate(cache_key)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -237,11 +243,14 @@ async def get_trader_trades(
 async def get_trader_pnl_curve(
     address: str,
     days: int = Query(default=90, ge=1, le=365),
+    bust_cache: bool = False,
     nansen_client: NansenClient = Depends(get_nansen_client),
     cache: CacheLayer = Depends(get_cache),
 ) -> PnlCurveResponse:
     """Return cumulative PnL curve for a trader."""
     cache_key = f"pnl_curve:{address}:{days}"
+    if bust_cache:
+        cache.invalidate(cache_key)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached

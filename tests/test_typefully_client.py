@@ -35,7 +35,7 @@ class TestTypefullyClient:
             title="Chart Post",
             media_ids=["uuid-1234"],
         )
-        assert payload["platforms"]["x"]["posts"][0]["media"] == ["uuid-1234"]
+        assert payload["platforms"]["x"]["posts"][0]["media_ids"] == ["uuid-1234"]
 
     def test_build_draft_payload_no_title(self, client):
         payload = client._build_draft_payload(posts=["Just text"])

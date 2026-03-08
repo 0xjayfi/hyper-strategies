@@ -6,6 +6,7 @@ then generates a JSON payload for the writer agent team.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
@@ -17,6 +18,7 @@ from src.config import (
     CONTENT_MIN_SCORE_DELTA,
     CONTENT_TOP_N,
 )
+from src.nansen_client import NansenClient
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +133,37 @@ def _compute_top_dimension_movers(today_row: dict, yesterday_row: dict | None) -
     return deltas[:3]
 
 
+async def _fetch_current_positions(address: str) -> list[dict]:
+    """Fetch live positions for a wallet via the Nansen API.
+
+    Returns a simplified list of position dicts for the content payload.
+    """
+    try:
+        async with NansenClient() as client:
+            snapshot = await client.fetch_address_positions(address)
+    except Exception:
+        logger.exception("Failed to fetch positions for %s", address)
+        return []
+
+    positions = []
+    for ap in snapshot.asset_positions:
+        p = ap.position
+        size = float(p.size)
+        positions.append({
+            "token": p.token_symbol,
+            "side": "Long" if size > 0 else "Short",
+            "position_value_usd": round(float(p.position_value_usd), 2),
+            "entry_price": round(float(p.entry_price_usd), 2),
+            "leverage": p.leverage_value,
+            "liquidation_price": round(float(p.liquidation_price_usd), 2) if p.liquidation_price_usd else None,
+            "unrealized_pnl_usd": round(float(p.unrealized_pnl_usd), 2) if p.unrealized_pnl_usd else None,
+        })
+
+    # Sort by position value descending
+    positions.sort(key=lambda x: abs(x["position_value_usd"]), reverse=True)
+    return positions
+
+
 def generate_content_payload(
     datastore: DataStore,
     today: date | None = None,
@@ -180,6 +213,14 @@ def generate_content_payload(
 
     label = datastore.get_trader_label(top_mover["address"])
 
+    # Fetch live positions from Nansen API
+    current_positions = asyncio.run(
+        _fetch_current_positions(top_mover["address"])
+    )
+    logger.info(
+        "Fetched %d live positions for %s", len(current_positions), top_mover["address"]
+    )
+
     return {
         "post_worthy": True,
         "snapshot_date": today.isoformat(),
@@ -200,6 +241,7 @@ def generate_content_payload(
         "current_dimensions": current_dims,
         "previous_dimensions": previous_dims,
         "top_movers": top_dimension_movers,
+        "current_positions": current_positions,
         "context": {
             "top_5_wallets": top_5,
         },

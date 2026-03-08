@@ -77,12 +77,15 @@ def _build_datastore_leaderboard(
 @router.get("/leaderboard", response_model=LeaderboardResponse)
 async def get_leaderboard(
     limit: int = Query(default=100, ge=1, le=200),
+    bust_cache: bool = False,
     nansen_client: NansenClient = Depends(get_nansen_client),
     datastore: DataStore = Depends(get_datastore),
     cache: CacheLayer = Depends(get_cache),
 ) -> LeaderboardResponse:
     """Return trader leaderboard from DataStore scores or Nansen fallback."""
     cache_key = "leaderboard:position_scores"
+    if bust_cache:
+        cache.invalidate(cache_key)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached

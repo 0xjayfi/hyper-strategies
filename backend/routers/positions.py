@@ -40,11 +40,14 @@ async def get_positions(
     side: SideEnum | None = None,
     min_position_usd: float = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
+    bust_cache: bool = False,
     nansen_client: NansenClient = Depends(get_nansen_client),
     cache: CacheLayer = Depends(get_cache),
 ) -> PositionResponse:
     """Return perpetual positions for a token, enriched with metadata."""
     cache_key = f"positions:{token.value}:{label_type.value}"
+    if bust_cache:
+        cache.invalidate(cache_key)
     cached = cache.get(cache_key)
 
     if cached is not None:

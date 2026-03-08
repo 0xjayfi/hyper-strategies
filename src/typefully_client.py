@@ -54,7 +54,7 @@ class TypefullyClient:
         for i, text in enumerate(posts):
             post = {"text": text}
             if i == 0 and media_ids:
-                post["media"] = media_ids
+                post["media_ids"] = media_ids
             x_posts.append(post)
 
         payload = {
@@ -82,22 +82,21 @@ class TypefullyClient:
         media_id = data["media_id"]
         upload_url = data["upload_url"]
 
-        mime_types = {
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".gif": "image/gif",
-        }
-        content_type = mime_types.get(path.suffix.lower(), "application/octet-stream")
-
+        # Typefully signs presigned URLs with empty Content-Type, so we
+        # must NOT send a Content-Type header or S3 returns 403.
         async with httpx.AsyncClient(timeout=60.0) as s3_client:
-            with open(file_path, "rb") as f:
-                s3_resp = await s3_client.put(
-                    upload_url,
-                    content=f.read(),
-                    headers={"Content-Type": content_type},
+            file_bytes = path.read_bytes()
+            s3_resp = await s3_client.put(
+                upload_url,
+                content=file_bytes,
+            )
+            if s3_resp.status_code != 200:
+                logger.error(
+                    "S3 upload failed (%s): %s",
+                    s3_resp.status_code,
+                    s3_resp.text,
                 )
-                s3_resp.raise_for_status()
+            s3_resp.raise_for_status()
 
         logger.info("Uploaded media %s -> %s", path.name, media_id)
         return media_id

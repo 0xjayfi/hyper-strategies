@@ -68,9 +68,9 @@ export function AllocationDashboard() {
   return (
     <PageLayout
       title="Allocation Dashboard"
-      description="The output of the scoring engine: which traders receive capital allocation, how much weight each gets, and the derived portfolio signals. Includes index portfolio construction, consensus direction per token, and risk cap monitoring. Auto-refreshes hourly."
+      description="The output of the scoring engine: which traders receive capital allocation, how much weight each gets, and the derived portfolio signals. Includes index portfolio construction, consensus direction per token, and risk cap monitoring. Data is cached for up to 1 hour. Click the sync icon to force a fresh fetch."
       lastUpdated={lastUpdated}
-      onRefresh={() => { alloc.refetch(); strat.refetch(); }}
+      onRefresh={() => { alloc.hardRefresh(); strat.hardRefresh(); }}
       isRefreshing={alloc.isFetching || strat.isFetching}
     >
       <div className="space-y-4 md:space-y-6">

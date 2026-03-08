@@ -194,11 +194,14 @@ def _detect_cap_violations(risk_caps: RiskCaps) -> list[CapViolation]:
 
 @router.get("/allocations", response_model=AllocationsResponse)
 async def get_allocations(
+    bust_cache: bool = False,
     ds: DataStore = Depends(get_datastore),
     cache: CacheLayer = Depends(get_cache),
 ) -> AllocationsResponse:
     """Return current trader allocation weights and risk cap utilisation."""
     cache_key = "allocations:latest"
+    if bust_cache:
+        cache.invalidate(cache_key)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -256,11 +259,14 @@ async def get_allocation_history(
 
 @router.get("/allocations/strategies", response_model=StrategiesResponse)
 async def get_strategies(
+    bust_cache: bool = False,
     ds: DataStore = Depends(get_datastore),
     cache: CacheLayer = Depends(get_cache),
 ) -> StrategiesResponse:
     """Return strategy signals: index portfolio, consensus, and sizing params."""
     cache_key = "allocations:strategies"
+    if bust_cache:
+        cache.invalidate(cache_key)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached

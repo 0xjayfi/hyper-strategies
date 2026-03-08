@@ -20,11 +20,14 @@ router = APIRouter(prefix="/api/v1", tags=["screener"])
 @router.get("/screener", response_model=ScreenerResponse)
 async def get_screener(
     token: str | None = Query(default=None, description="Filter by token symbol"),
+    bust_cache: bool = False,
     nansen_client: NansenClient = Depends(get_nansen_client),
     cache: CacheLayer = Depends(get_cache),
 ) -> ScreenerResponse:
     """Return perp screener data, optionally filtered by token."""
     cache_key = f"screener:{token or 'all'}"
+    if bust_cache:
+        cache.invalidate(cache_key)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached

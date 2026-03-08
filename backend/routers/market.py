@@ -41,11 +41,14 @@ def _compute_consensus(
 
 @router.get("/market-overview", response_model=MarketOverviewResponse)
 async def get_market_overview(
+    bust_cache: bool = False,
     nansen_client: NansenClient = Depends(get_nansen_client),
     cache: CacheLayer = Depends(get_cache),
 ) -> MarketOverviewResponse:
     """Return aggregated market overview for BTC, ETH, SOL, HYPE."""
     cache_key = "market-overview"
+    if bust_cache:
+        cache.invalidate(cache_key)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached

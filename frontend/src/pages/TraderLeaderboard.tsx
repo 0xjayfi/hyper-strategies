@@ -24,7 +24,7 @@ export function TraderLeaderboard() {
   usePageTitle('Trader Leaderboard');
   const [selectedTrader, setSelectedTrader] = useState<string | null>(null);
 
-  const { data, isLoading, isError, error, refetch, isFetching, dataUpdatedAt } =
+  const { data, isLoading, isError, error, refetch, hardRefresh, isFetching, dataUpdatedAt } =
     useLeaderboard();
 
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt).toISOString() : undefined;
@@ -47,9 +47,9 @@ export function TraderLeaderboard() {
   return (
     <PageLayout
       title="Trader Leaderboard"
-      description="Top traders ranked by a 6-component position-based score: account growth, drawdown control, leverage discipline, liquidation safety, portfolio diversity, and consistency. Traders must pass eligibility gates to receive allocation weights. Auto-refreshes hourly."
+      description="Top traders ranked by a 6-component position-based score: account growth, drawdown control, leverage discipline, liquidation safety, portfolio diversity, and consistency. Traders must pass eligibility gates to receive allocation weights. Data is cached for up to 1 hour. Click the sync icon to force a fresh fetch."
       lastUpdated={lastUpdated}
-      onRefresh={() => refetch()}
+      onRefresh={() => hardRefresh()}
       isRefreshing={isFetching}
     >
       <div className="space-y-4">

@@ -109,14 +109,14 @@ export function TraderDeepDive() {
   const { address = '' } = useParams<{ address: string }>();
   const navigate = useNavigate();
 
-  const { data: trader, isLoading, isError, error, refetch, isFetching } = useTrader(address);
-  const { data: tradesData, isLoading: tradesLoading, isError: tradesError, error: tradesErr, refetch: refetchTrades } = useTraderTrades(address);
-  const { data: pnlData, isLoading: pnlLoading, isError: pnlError, error: pnlErr, refetch: refetchPnl } = useTraderPnlCurve(address);
+  const { data: trader, isLoading, isError, error, refetch, hardRefresh, isFetching } = useTrader(address);
+  const { data: tradesData, isLoading: tradesLoading, isError: tradesError, error: tradesErr, refetch: refetchTrades, hardRefresh: hardRefreshTrades } = useTraderTrades(address);
+  const { data: pnlData, isLoading: pnlLoading, isError: pnlError, error: pnlErr, refetch: refetchPnl, hardRefresh: hardRefreshPnl } = useTraderPnlCurve(address);
 
   return (
     <PageLayout
       title="Trader Deep Dive"
-      onRefresh={() => { refetch(); refetchTrades(); refetchPnl(); }}
+      onRefresh={() => { hardRefresh(); hardRefreshTrades(); hardRefreshPnl(); }}
       isRefreshing={isFetching}
     >
       <div className="space-y-4">
