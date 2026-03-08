@@ -15,7 +15,10 @@ from playwright.async_api import async_playwright
 VIEWPORT = {"width": 1440, "height": 900}
 
 # Timeout for waiting on data-loading elements (ms)
-WAIT_TIMEOUT = 30_000
+WAIT_TIMEOUT = 60_000
+
+# Extra settle time after selector appears to let child components render (ms)
+SETTLE_MS = 3_000
 
 
 async def capture_screenshots(
@@ -31,7 +34,7 @@ async def capture_screenshots(
       - trader_positions.png
     """
     url = dashboard_url or os.environ.get(
-        "DASHBOARD_URL", "https://hyper-strategies-pnl-vercel.vercel.app"
+        "DASHBOARD_URL", "http://localhost:5173"
     )
     url = url.rstrip("/")
 
@@ -49,10 +52,21 @@ async def capture_screenshots(
         page = await browser.new_page(viewport=VIEWPORT)
 
         # --- Screenshot 1: Leaderboard top 5 ---
-        await page.goto(f"{url}/leaderboard", wait_until="networkidle")
+        await page.goto(f"{url}/leaderboard", wait_until="domcontentloaded")
         await page.wait_for_selector(
             '[data-testid="leaderboard-table"]', timeout=WAIT_TIMEOUT
         )
+        await page.wait_for_timeout(SETTLE_MS)
+
+        # Hide rows beyond top 5 so screenshot only shows the top traders
+        await page.evaluate("""
+            const table = document.querySelector('[data-testid="leaderboard-table"]');
+            if (table) {
+                const rows = table.querySelectorAll('tbody tr');
+                rows.forEach((row, i) => { if (i >= 5) row.style.display = 'none'; });
+            }
+        """)
+
         leaderboard_path = str(out / "leaderboard_top5.png")
         table = page.locator('[data-testid="leaderboard-table"]')
         await table.screenshot(path=leaderboard_path)
@@ -60,13 +74,14 @@ async def capture_screenshots(
 
         # --- Navigate to trader deep dive ---
         await page.goto(
-            f"{url}/traders/{address}", wait_until="networkidle"
+            f"{url}/traders/{address}", wait_until="domcontentloaded"
         )
 
-        # --- Screenshot 2: Radar chart + metrics ---
+        # --- Screenshot 2: Radar chart ---
         await page.wait_for_selector(
             '[data-testid="trader-radar"]', timeout=WAIT_TIMEOUT
         )
+        await page.wait_for_timeout(SETTLE_MS)
         radar_path = str(out / "trader_radar.png")
         radar = page.locator('[data-testid="trader-radar"]')
         await radar.screenshot(path=radar_path)
@@ -76,6 +91,7 @@ async def capture_screenshots(
         await page.wait_for_selector(
             '[data-testid="trader-overview"]', timeout=WAIT_TIMEOUT
         )
+        await page.wait_for_timeout(SETTLE_MS)
         overview_path = str(out / "trader_positions.png")
         overview = page.locator('[data-testid="trader-overview"]')
         await overview.screenshot(path=overview_path)

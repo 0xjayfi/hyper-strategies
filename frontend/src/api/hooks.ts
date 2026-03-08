@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { apiClient } from './client';
 import type {
   PositionResponse,
@@ -26,21 +26,25 @@ export interface PositionFilters {
 }
 
 /**
- * Helper: returns the standard query result plus a `hardRefresh` function
- * that busts the server-side cache before refetching.
+ * Helper: returns a `hardRefresh` function + `isHardRefreshing` flag.
+ *
+ * Fetches with bust_cache=true to clear the server-side cache, then
+ * writes the result into the React Query cache.  Tracks loading state
+ * via useState so the spinner works reliably.
  */
 function useHardRefresh<T>(queryKey: readonly unknown[], fetchFn: (bustCache?: boolean) => Promise<T>) {
   const queryClient = useQueryClient();
-  const hardRefresh = useCallback(() => {
-    // Replace the queryFn temporarily to include bust_cache=true,
-    // then refetch, then restore the normal queryFn.
-    queryClient.fetchQuery({
-      queryKey,
-      queryFn: () => fetchFn(true),
-      staleTime: 0,
-    });
+  const [isHardRefreshing, setIsHardRefreshing] = useState(false);
+  const hardRefresh = useCallback(async () => {
+    setIsHardRefreshing(true);
+    try {
+      const freshData = await fetchFn(true);
+      queryClient.setQueryData(queryKey, freshData);
+    } finally {
+      setIsHardRefreshing(false);
+    }
   }, [queryClient, queryKey, fetchFn]);
-  return hardRefresh;
+  return { hardRefresh, isHardRefreshing };
 }
 
 export function usePositions(filters: PositionFilters) {
@@ -61,8 +65,8 @@ export function usePositions(filters: PositionFilters) {
     refetchInterval: REFRESH_INTERVALS.positions,
     staleTime: 60_000,
   });
-  const hardRefresh = useHardRefresh(queryKey, fetchPositions);
-  return { ...query, hardRefresh };
+  const { hardRefresh, isHardRefreshing } = useHardRefresh(queryKey, fetchPositions);
+  return { ...query, hardRefresh, isFetching: query.isFetching || isHardRefreshing };
 }
 
 export function useMarketOverview() {
@@ -78,8 +82,8 @@ export function useMarketOverview() {
     refetchInterval: REFRESH_INTERVALS.positions,
     staleTime: 60_000,
   });
-  const hardRefresh = useHardRefresh(queryKey, fetchData);
-  return { ...query, hardRefresh };
+  const { hardRefresh, isHardRefreshing } = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh, isFetching: query.isFetching || isHardRefreshing };
 }
 
 export function useLeaderboard() {
@@ -95,8 +99,8 @@ export function useLeaderboard() {
     refetchInterval: REFRESH_INTERVALS.leaderboard,
     staleTime: 5 * 60_000,
   });
-  const hardRefresh = useHardRefresh(queryKey, fetchData);
-  return { ...query, hardRefresh };
+  const { hardRefresh, isHardRefreshing } = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh, isFetching: query.isFetching || isHardRefreshing };
 }
 
 export function useTrader(address: string) {
@@ -112,8 +116,8 @@ export function useTrader(address: string) {
     staleTime: 5 * 60_000,
     enabled: !!address,
   });
-  const hardRefresh = useHardRefresh(queryKey, fetchData);
-  return { ...query, hardRefresh };
+  const { hardRefresh, isHardRefreshing } = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh, isFetching: query.isFetching || isHardRefreshing };
 }
 
 export function useTraderTrades(address: string, days: number = 30) {
@@ -129,8 +133,8 @@ export function useTraderTrades(address: string, days: number = 30) {
     staleTime: 5 * 60_000,
     enabled: !!address,
   });
-  const hardRefresh = useHardRefresh(queryKey, fetchData);
-  return { ...query, hardRefresh };
+  const { hardRefresh, isHardRefreshing } = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh, isFetching: query.isFetching || isHardRefreshing };
 }
 
 export function useTraderPnlCurve(address: string, days: number = 90) {
@@ -146,8 +150,8 @@ export function useTraderPnlCurve(address: string, days: number = 90) {
     staleTime: 5 * 60_000,
     enabled: !!address,
   });
-  const hardRefresh = useHardRefresh(queryKey, fetchData);
-  return { ...query, hardRefresh };
+  const { hardRefresh, isHardRefreshing } = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh, isFetching: query.isFetching || isHardRefreshing };
 }
 
 export function useAllocations() {
@@ -163,8 +167,8 @@ export function useAllocations() {
     refetchInterval: REFRESH_INTERVALS.allocations,
     staleTime: 5 * 60_000,
   });
-  const hardRefresh = useHardRefresh(queryKey, fetchData);
-  return { ...query, hardRefresh };
+  const { hardRefresh, isHardRefreshing } = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh, isFetching: query.isFetching || isHardRefreshing };
 }
 
 export function useAllocationHistory(days: number = 30) {
@@ -191,8 +195,8 @@ export function useAllocationStrategies() {
     refetchInterval: REFRESH_INTERVALS.allocations,
     staleTime: 5 * 60_000,
   });
-  const hardRefresh = useHardRefresh(queryKey, fetchData);
-  return { ...query, hardRefresh };
+  const { hardRefresh, isHardRefreshing } = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh, isFetching: query.isFetching || isHardRefreshing };
 }
 
 export function useAssessment(address: string, windowDays: number = 30) {
@@ -210,8 +214,8 @@ export function useAssessment(address: string, windowDays: number = 30) {
     enabled: !!address,
     retry: 1,
   });
-  const hardRefresh = useHardRefresh(queryKey, fetchData);
-  return { ...query, hardRefresh };
+  const { hardRefresh, isHardRefreshing } = useHardRefresh(queryKey, fetchData);
+  return { ...query, hardRefresh, isFetching: query.isFetching || isHardRefreshing };
 }
 
 export function useHealthCheck() {
