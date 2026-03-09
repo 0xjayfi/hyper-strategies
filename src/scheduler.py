@@ -338,7 +338,7 @@ async def run_scheduler(
     logger.info("Starting scheduler")
 
     # Track last run times
-    last_leaderboard_refresh = None
+    last_leaderboard_date = None  # date (not datetime) — triggers on new UTC day
     last_position_sweep = None
     last_scoring = None
     last_cleanup = None
@@ -347,7 +347,7 @@ async def run_scheduler(
     try:
         logger.info("Running initial leaderboard refresh")
         await refresh_leaderboard(nansen_client, datastore)
-        last_leaderboard_refresh = datetime.now(timezone.utc)
+        last_leaderboard_date = datetime.now(timezone.utc).date()
     except Exception as e:
         logger.error(f"Initial leaderboard refresh failed: {e}")
 
@@ -365,6 +365,23 @@ async def run_scheduler(
         last_scoring = datetime.now(timezone.utc)
     except Exception as e:
         logger.error(f"Initial position scoring cycle failed: {e}")
+
+    # --- Startup: save daily score snapshots for content pipeline ---
+    # Save today's snapshot and backfill yesterday if missing, so the
+    # content pipeline (which compares today vs yesterday) can work
+    # immediately after a restart instead of waiting 48 hours.
+    try:
+        today = datetime.now(timezone.utc).date()
+        yesterday = today - timedelta(days=1)
+
+        logger.info("Saving daily score snapshot on startup (today=%s)", today)
+        save_daily_score_snapshot(datastore, snapshot_date=today)
+
+        if not datastore.get_score_snapshots_for_date(yesterday):
+            logger.info("Backfilling missing yesterday snapshot (%s)", yesterday)
+            save_daily_score_snapshot(datastore, snapshot_date=yesterday)
+    except Exception as e:
+        logger.error(f"Startup daily score snapshot failed: {e}")
 
     # --- Startup: run initial cleanup ---
     try:
@@ -404,18 +421,19 @@ async def run_scheduler(
                     except Exception as e:
                         logger.error(f"Position scoring cycle failed: {e}")
 
-            # Daily leaderboard refresh
-            if last_leaderboard_refresh is None or (now - last_leaderboard_refresh) >= timedelta(days=1):
-                logger.info("Triggering daily leaderboard refresh")
+            # Daily leaderboard refresh — triggers on new UTC day (midnight)
+            today = now.date()
+            if last_leaderboard_date is None or today > last_leaderboard_date:
+                logger.info("Triggering daily leaderboard refresh (new day: %s)", today)
                 try:
                     await refresh_leaderboard(nansen_client, datastore)
-                    last_leaderboard_refresh = now
+                    last_leaderboard_date = today
                 except Exception as e:
                     logger.error(f"Leaderboard refresh failed: {e}")
 
                 # Daily score snapshot for content pipeline
                 try:
-                    save_daily_score_snapshot(datastore)
+                    save_daily_score_snapshot(datastore, snapshot_date=today)
                 except Exception as e:
                     logger.error(f"Daily score snapshot failed: {e}")
 
