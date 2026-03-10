@@ -59,3 +59,52 @@ async def test_scheduler_task_logs_exception_on_crash():
                             f"Expected logger.error to be called with 'Scheduler task died unexpectedly', "
                             f"but got calls: {calls}"
                         )
+
+
+@pytest.mark.asyncio
+async def test_scoring_cycle_continues_after_single_trader_error():
+    """If one trader's scoring fails, other traders should still be scored."""
+    from src.scheduler import position_scoring_cycle
+    from src.allocation import RiskConfig
+    from src.datastore import DataStore
+    from datetime import datetime, timedelta, timezone
+
+    ds = DataStore(":memory:")
+    risk_config = RiskConfig(max_total_open_usd=50_000.0)
+
+    # Set up two traders
+    addr_good = "0x" + "a" * 40
+    addr_bad = "0x" + "b" * 40
+    ds.upsert_trader(addr_good, label=None)
+    ds.upsert_trader(addr_bad, label=None)
+
+    # Insert enough position data for both traders (need ≥2 account series points)
+    base_time = datetime.now(timezone.utc) - timedelta(hours=10)
+    for i in range(10):
+        positions = [{
+            "token_symbol": "BTC", "side": "Long",
+            "position_value_usd": 50000, "entry_price": 50000,
+            "leverage_value": 3.0, "leverage_type": "cross",
+            "liquidation_price": 35000, "unrealized_pnl": i * 100,
+            "account_value": 100000 + i * 500,
+        }]
+        ds.insert_position_snapshot(addr_good, positions)
+        ds.insert_position_snapshot(addr_bad, positions)
+
+    # Make compute_position_metrics raise for the first call only
+    original_compute = __import__("src.position_metrics", fromlist=["compute_position_metrics"]).compute_position_metrics
+
+    def patched_compute(account_series, position_snapshots, *, _addr=[None]):
+        if _addr[0] is None:
+            _addr[0] = "first"
+            raise ValueError("simulated metric computation failure")
+        return original_compute(account_series, position_snapshots)
+
+    nansen_client = AsyncMock()
+
+    with patch("src.scheduler.compute_position_metrics", side_effect=patched_compute):
+        result = await position_scoring_cycle(nansen_client, ds, risk_config)
+
+    # At least one trader should have been scored despite the other failing
+    scores = ds.get_latest_scores()
+    assert len(scores) >= 1, "At least one trader should have been scored"

@@ -148,48 +148,53 @@ async def position_scoring_cycle(
         scores = {}
 
         for address in traders:
-            # Get 30-day time series data
-            account_series = datastore.get_account_value_series(address, days=30)
-            position_snapshots = datastore.get_position_snapshot_series(address, days=30)
+            try:
+                # Get 30-day time series data
+                account_series = datastore.get_account_value_series(address, days=30)
+                position_snapshots = datastore.get_position_snapshot_series(address, days=30)
 
-            # Skip if insufficient data
-            if len(account_series) < 2:
-                logger.debug(f"Skipping {address}: insufficient account series ({len(account_series)} points)")
+                # Skip if insufficient data
+                if len(account_series) < 2:
+                    logger.debug(f"Skipping {address}: insufficient account series ({len(account_series)} points)")
+                    continue
+
+                # Compute position-based metrics
+                metrics = compute_position_metrics(account_series, position_snapshots)
+
+                # Check position-based eligibility
+                is_eligible, reason = is_position_eligible(address, metrics, datastore)
+
+                # Get label for smart money bonus
+                label = datastore.get_trader_label(address)
+
+                # Compute hours since last snapshot with positions
+                hours_since = _hours_since_last_snapshot(address, datastore)
+
+                # Compute position-based score
+                score_dict = compute_position_score(
+                    metrics=metrics,
+                    label=label,
+                    hours_since_last_snapshot=hours_since,
+                )
+
+                # Add fields required by insert_score and compute_allocations
+                # Map position score components to the trader_scores schema
+                score_for_db = _map_score_to_db_schema(score_dict, is_eligible)
+
+                # Store score
+                datastore.insert_score(address, score_for_db)
+
+                # Add to eligible list if passed
+                if is_eligible:
+                    eligible_traders.append(address)
+                    scores[address] = score_for_db
+                    logger.debug(f"Trader {address} eligible with score {score_dict['final_score']:.4f}")
+                else:
+                    logger.info(f"Trader {address} filtered: {reason}")
+
+            except Exception as e:
+                logger.warning(f"Scoring failed for trader {address}: {e}")
                 continue
-
-            # Compute position-based metrics
-            metrics = compute_position_metrics(account_series, position_snapshots)
-
-            # Check position-based eligibility
-            is_eligible, reason = is_position_eligible(address, metrics, datastore)
-
-            # Get label for smart money bonus
-            label = datastore.get_trader_label(address)
-
-            # Compute hours since last snapshot with positions
-            hours_since = _hours_since_last_snapshot(address, datastore)
-
-            # Compute position-based score
-            score_dict = compute_position_score(
-                metrics=metrics,
-                label=label,
-                hours_since_last_snapshot=hours_since,
-            )
-
-            # Add fields required by insert_score and compute_allocations
-            # Map position score components to the trader_scores schema
-            score_for_db = _map_score_to_db_schema(score_dict, is_eligible)
-
-            # Store score
-            datastore.insert_score(address, score_for_db)
-
-            # Add to eligible list if passed
-            if is_eligible:
-                eligible_traders.append(address)
-                scores[address] = score_for_db
-                logger.debug(f"Trader {address} eligible with score {score_dict['final_score']:.4f}")
-            else:
-                logger.info(f"Trader {address} filtered: {reason}")
 
         logger.info(f"Found {len(eligible_traders)} eligible traders out of {len(traders)}")
 
