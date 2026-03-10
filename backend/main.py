@@ -21,6 +21,8 @@ from src.scheduler import run_scheduler
 
 logger = logging.getLogger(__name__)
 
+SCHEDULER_RESTART_DELAY_S: float = 5.0
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -43,10 +45,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Launch scheduler as background task (skip in test mode)
     if os.getenv("TESTING") != "1":
         risk_config = RiskConfig(max_total_open_usd=50_000.0)
-        scheduler_task = asyncio.create_task(
-            run_scheduler(nansen_client, datastore, risk_config)
-        )
-        app.state.scheduler_task = scheduler_task
+
+        def _start_scheduler() -> asyncio.Task:
+            task = asyncio.create_task(
+                run_scheduler(nansen_client, datastore, risk_config)
+            )
+            task.add_done_callback(_on_scheduler_done)
+            return task
+
+        def _on_scheduler_done(task: asyncio.Task) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                logger.error(
+                    "Scheduler task died unexpectedly: %s — restarting in 5s",
+                    exc,
+                )
+                loop = asyncio.get_event_loop()
+                loop.call_later(
+                    SCHEDULER_RESTART_DELAY_S,
+                    lambda: setattr(app.state, "scheduler_task", _start_scheduler()),
+                )
+
+        app.state.scheduler_task = _start_scheduler()
 
     logger.info("Hyper-Signals API ready.")
     yield
@@ -57,7 +79,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.scheduler_task.cancel()
         try:
             await app.state.scheduler_task
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, Exception):
             pass
     await nansen_client.close()
     datastore.close()
