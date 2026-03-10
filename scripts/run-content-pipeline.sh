@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Automated X Content Pipeline — Daily cron runner
 # Crontab entry:
-#   0 8 * * *  /home/jsong407/hyper-strategies-pnl-weighted/scripts/run-content-pipeline.sh >> /home/jsong407/hyper-strategies-pnl-weighted/logs/content-pipeline.log 2>&1
+#   0 8 * * *  /home/jsong407/hyper-strategies/scripts/run-content-pipeline.sh >> /home/jsong407/hyper-strategies/logs/content-pipeline.log 2>&1
 
 set -euo pipefail
 
-cd /home/jsong407/hyper-strategies-pnl-weighted
+cd /home/jsong407/hyper-strategies
 
 # Load pyenv so the correct Python + virtualenv are on PATH
 export PYENV_ROOT="$HOME/.pyenv"
@@ -16,15 +16,6 @@ eval "$(pyenv init -)"
 set -a
 source .env
 set +a
-
-# Sync database from the running backend (if it exists and is newer)
-BACKEND_DB="${BACKEND_DB:-/home/jsong407/hyper-strategies/data/pnl_weighted.db}"
-LOCAL_DB="data/pnl_weighted.db"
-
-if [ -f "$BACKEND_DB" ] && [ "$BACKEND_DB" != "$(realpath "$LOCAL_DB" 2>/dev/null)" ]; then
-    echo "[$(date -u)] Syncing database from running backend: $BACKEND_DB"
-    cp "$BACKEND_DB" "$LOCAL_DB"
-fi
 
 # Take a fresh daily score snapshot so the comparison has up-to-date data
 echo "[$(date -u)] Taking daily score snapshot..."
