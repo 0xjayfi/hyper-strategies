@@ -164,7 +164,7 @@ export function TraderDeepDive() {
 
         {/* Radar + Score + Allocation */}
         {trader && (
-          <>
+          <div data-testid="trader-scoring" className="space-y-4">
             {/* Radar chart — full width for visual impact */}
             {trader.score_growth != null && (
               <div data-testid="trader-radar">
@@ -186,7 +186,7 @@ export function TraderDeepDive() {
               <ScoreBreakdown breakdown={trader.score_breakdown} />
               <AllocationHistory address={address} currentWeight={trader.allocation_weight} />
             </div>
-          </>
+          </div>
         )}
 
         {/* Trade History */}

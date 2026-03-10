@@ -30,8 +30,8 @@ async def capture_screenshots(
 
     Returns list of output file paths:
       - leaderboard_top5.png
-      - trader_radar.png
-      - trader_positions.png
+      - trader_scoring.png   (radar + score breakdown + allocation history)
+      - trader_positions.png (header + top positions, no metrics cards)
     """
     url = dashboard_url or os.environ.get(
         "DASHBOARD_URL", "http://localhost:5173"
@@ -77,21 +77,35 @@ async def capture_screenshots(
             f"{url}/traders/{address}", wait_until="domcontentloaded"
         )
 
-        # --- Screenshot 2: Radar chart ---
+        # --- Screenshot 2: Full scoring region (radar + breakdown + allocation) ---
         await page.wait_for_selector(
-            '[data-testid="trader-radar"]', timeout=WAIT_TIMEOUT
+            '[data-testid="trader-scoring"]', timeout=WAIT_TIMEOUT
         )
         await page.wait_for_timeout(SETTLE_MS)
-        radar_path = str(out / "trader_radar.png")
-        radar = page.locator('[data-testid="trader-radar"]')
-        await radar.screenshot(path=radar_path)
-        paths.append(radar_path)
+        scoring_path = str(out / "trader_scoring.png")
+        scoring = page.locator('[data-testid="trader-scoring"]')
+        await scoring.screenshot(path=scoring_path)
+        paths.append(scoring_path)
 
-        # --- Screenshot 3: Trader overview (header + metrics + positions) ---
+        # --- Screenshot 3: Trader header + top positions (no metrics cards) ---
         await page.wait_for_selector(
             '[data-testid="trader-overview"]', timeout=WAIT_TIMEOUT
         )
         await page.wait_for_timeout(SETTLE_MS)
+
+        # Hide MetricsCards grid and limit visible position rows to top 12
+        await page.evaluate("""
+            const overview = document.querySelector('[data-testid="trader-overview"]');
+            if (overview) {
+                // Hide the 3-column metrics grid (7d/30d/90d cards)
+                const metricsGrid = overview.querySelector('[class*="sm:grid-cols-3"]');
+                if (metricsGrid) metricsGrid.style.display = 'none';
+                // Limit position table rows to first 12
+                const rows = overview.querySelectorAll('table tbody tr');
+                rows.forEach((row, i) => { if (i >= 12) row.style.display = 'none'; });
+            }
+        """)
+
         overview_path = str(out / "trader_positions.png")
         overview = page.locator('[data-testid="trader-overview"]')
         await overview.screenshot(path=overview_path)

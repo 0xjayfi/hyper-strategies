@@ -14,6 +14,7 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
@@ -48,12 +49,20 @@ class TypefullyClient:
         posts: list[str],
         title: str = "",
         media_ids: Optional[list[str]] = None,
+        per_post_media: Optional[list[list[str]]] = None,
     ) -> dict:
-        """Build the JSON payload for creating a draft."""
+        """Build the JSON payload for creating a draft.
+
+        Media can be attached two ways:
+        - ``media_ids``: all media on the first post (legacy)
+        - ``per_post_media``: list of media_id lists, one per post
+        """
         x_posts = []
         for i, text in enumerate(posts):
-            post = {"text": text}
-            if i == 0 and media_ids:
+            post: dict = {"text": text}
+            if per_post_media and i < len(per_post_media) and per_post_media[i]:
+                post["media_ids"] = per_post_media[i]
+            elif i == 0 and media_ids:
                 post["media_ids"] = media_ids
             x_posts.append(post)
 
@@ -109,14 +118,55 @@ class TypefullyClient:
         resp.raise_for_status()
         return resp.json()["status"]
 
+    async def wait_for_media_ready(
+        self,
+        media_id: str,
+        timeout: float = 60.0,
+        poll_interval: float = 2.0,
+    ) -> str:
+        """Poll until media is ready. Returns final status."""
+        elapsed = 0.0
+        while elapsed < timeout:
+            status = await self.get_media_status(media_id)
+            if status == "ready":
+                return status
+            if status == "error":
+                raise RuntimeError(f"Media {media_id} processing failed")
+            logger.debug("Media %s status: %s, waiting...", media_id, status)
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+        raise TimeoutError(
+            f"Media {media_id} still processing after {timeout}s"
+        )
+
     async def create_draft(
         self,
         posts: list[str],
         title: str = "",
         media_ids: Optional[list[str]] = None,
+        per_post_media: Optional[list[list[str]]] = None,
     ) -> dict:
-        """Create a Typefully draft. Returns the draft response dict."""
-        payload = self._build_draft_payload(posts, title, media_ids)
+        """Create a Typefully draft. Returns the draft response dict.
+
+        Waits for all referenced media to finish processing before
+        submitting the draft.
+        """
+        # Collect all media IDs that need to be ready
+        all_ids: list[str] = []
+        if media_ids:
+            all_ids.extend(media_ids)
+        if per_post_media:
+            for ids in per_post_media:
+                all_ids.extend(ids)
+
+        # Wait for all media to finish processing
+        for mid in all_ids:
+            await self.wait_for_media_ready(mid)
+            logger.info("Media %s ready", mid)
+
+        payload = self._build_draft_payload(
+            posts, title, media_ids, per_post_media
+        )
         resp = await self._http.post(
             f"/social-sets/{self._social_set_id}/drafts",
             json=payload,
