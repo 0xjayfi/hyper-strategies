@@ -132,7 +132,10 @@ class IndexPortfolio(ContentAngle):
                     capture_selector='[data-testid="allocation-strategies"]',
                     filename="index_portfolio.png",
                     pre_capture_js=(
-                        'document.querySelector(\'[data-testid="allocation-strategies"]\')?.scrollIntoView();'
+                        "const tab = document.querySelector('[data-testid=\"allocation-strategies\"]') "
+                        "|| document.querySelector('button[aria-label=\"Index Portfolio\"]') "
+                        "|| [...document.querySelectorAll('button')].find(b => b.textContent.includes('Index Portfolio'));"
+                        "if (tab) { tab.click(); tab.scrollIntoView(); }"
                     ),
                 ),
             ]
