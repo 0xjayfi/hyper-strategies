@@ -62,7 +62,7 @@ export function PositionExplorer() {
       onRefresh={() => hardRefresh()}
       isRefreshing={isFetching}
     >
-      <div className="space-y-4">
+      <div data-testid="position-explorer" className="space-y-4">
         <PositionFilters
           token={token}
           side={side}

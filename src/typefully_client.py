@@ -50,12 +50,16 @@ class TypefullyClient:
         title: str = "",
         media_ids: Optional[list[str]] = None,
         per_post_media: Optional[list[list[str]]] = None,
+        publish_at: Optional[str] = None,
     ) -> dict:
         """Build the JSON payload for creating a draft.
 
         Media can be attached two ways:
         - ``media_ids``: all media on the first post (legacy)
         - ``per_post_media``: list of media_id lists, one per post
+
+        If ``publish_at`` is provided (ISO 8601 string), the draft will be
+        scheduled for publication at that time.
         """
         x_posts = []
         for i, text in enumerate(posts):
@@ -76,6 +80,8 @@ class TypefullyClient:
         }
         if title:
             payload["draft_title"] = title
+        if publish_at:
+            payload["publish_at"] = publish_at
 
         return payload
 
@@ -145,11 +151,15 @@ class TypefullyClient:
         title: str = "",
         media_ids: Optional[list[str]] = None,
         per_post_media: Optional[list[list[str]]] = None,
+        publish_at: Optional[str] = None,
     ) -> dict:
         """Create a Typefully draft. Returns the draft response dict.
 
         Waits for all referenced media to finish processing before
         submitting the draft.
+
+        If ``publish_at`` is provided (ISO 8601 string), the draft will be
+        scheduled for publication at that time.
         """
         # Collect all media IDs that need to be ready
         all_ids: list[str] = []
@@ -165,7 +175,7 @@ class TypefullyClient:
             logger.info("Media %s ready", mid)
 
         payload = self._build_draft_payload(
-            posts, title, media_ids, per_post_media
+            posts, title, media_ids, per_post_media, publish_at=publish_at
         )
         resp = await self._http.post(
             f"/social-sets/{self._social_set_id}/drafts",

@@ -73,7 +73,7 @@ export function AllocationDashboard() {
       onRefresh={() => { alloc.hardRefresh(); strat.hardRefresh(); }}
       isRefreshing={alloc.isFetching || strat.isFetching}
     >
-      <div className="space-y-4 md:space-y-6">
+      <div data-testid="allocation-dashboard" className="space-y-4 md:space-y-6">
         {isLoading ? (
           <LoadingState message="Loading allocation data..." />
         ) : isError ? (
@@ -118,7 +118,7 @@ export function AllocationDashboard() {
             />
 
             {/* Strategy Tabs */}
-            <div>
+            <div data-testid="allocation-strategies">
               <div className="flex overflow-x-auto border-b border-border">
                 {TABS.map((tab) => (
                   <button

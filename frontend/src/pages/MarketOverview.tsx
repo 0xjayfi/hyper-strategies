@@ -48,7 +48,7 @@ export function MarketOverview() {
       onRefresh={() => hardRefresh()}
       isRefreshing={isFetching}
     >
-      <div className="space-y-4 md:space-y-6">
+      <div data-testid="market-overview" className="space-y-4 md:space-y-6">
         {isLoading ? (
           <LoadingState message="Loading market data..." />
         ) : isError ? (

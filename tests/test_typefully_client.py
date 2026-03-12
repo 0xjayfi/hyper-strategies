@@ -59,6 +59,21 @@ class TestTypefullyClient:
         payload = client._build_draft_payload(posts=["Just text"])
         assert "draft_title" not in payload
 
+    def test_build_draft_payload_with_publish_at(self, client):
+        payload = client._build_draft_payload(
+            posts=["Scheduled post"],
+            title="Scheduled",
+            publish_at="2026-03-12T15:00:00Z",
+        )
+        assert payload["publish_at"] == "2026-03-12T15:00:00Z"
+
+    def test_build_draft_payload_without_publish_at(self, client):
+        payload = client._build_draft_payload(
+            posts=["No schedule"],
+            title="Unscheduled",
+        )
+        assert "publish_at" not in payload
+
     @pytest.mark.asyncio
     async def test_create_draft_calls_api(self, client):
         mock_response = MagicMock()
@@ -77,6 +92,30 @@ class TestTypefullyClient:
             )
         assert result["id"] == 99
         assert result["private_url"] == "https://typefully.com/draft/abc"
+
+    @pytest.mark.asyncio
+    async def test_create_draft_passes_publish_at(self, client):
+        """create_draft forwards publish_at into the HTTP payload."""
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {
+            "id": 101,
+            "status": "draft",
+            "private_url": "https://typefully.com/draft/sched",
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(client._http, "post", new_callable=AsyncMock, return_value=mock_response) as mock_post:
+            result = await client.create_draft(
+                posts=["Scheduled post"],
+                title="Sched",
+                publish_at="2026-03-12T15:00:00Z",
+            )
+        assert result["id"] == 101
+        # Verify the JSON payload sent to the API contains publish_at
+        call_kwargs = mock_post.call_args
+        sent_payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert sent_payload["publish_at"] == "2026-03-12T15:00:00Z"
 
     @pytest.mark.asyncio
     async def test_create_draft_waits_for_media(self, client):
