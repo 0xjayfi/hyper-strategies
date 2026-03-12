@@ -118,3 +118,19 @@ POSITION_MAX_LEVERAGE = 25.0
 CONTENT_MIN_RANK_CHANGE = 2       # Minimum rank positions moved to trigger
 CONTENT_MIN_SCORE_DELTA = 0.10    # Minimum composite score change to trigger
 CONTENT_TOP_N = 5                 # Track entry/exit from top N
+
+# ---------------------------------------------------------------------------
+# Content pipeline — multi-angle
+# ---------------------------------------------------------------------------
+
+CONTENT_ANGLES = {
+    "wallet_spotlight": {"cooldown_days": 2, "auto_publish": False, "tone": "analytical"},
+    "leaderboard_shakeup": {"cooldown_days": 2, "auto_publish": True, "tone": "neutral"},
+    "smart_money_consensus": {"cooldown_days": 3, "auto_publish": False, "tone": "analytical"},
+    "allocation_shift": {"cooldown_days": 3, "auto_publish": True, "tone": "neutral"},
+    "token_spotlight": {"cooldown_days": 3, "auto_publish": False, "tone": "analytical"},
+    "index_portfolio": {"cooldown_days": 4, "auto_publish": True, "tone": "neutral"},
+}
+CONTENT_SECOND_POST_MIN_SCORE = 0.5
+CONTENT_MAX_FRESHNESS_BOOST = 1.3
+CONTENT_FRESHNESS_BOOST_PER_DAY = 0.05

@@ -170,6 +170,48 @@ class DataStore:
                 UNIQUE(snapshot_date, trader_id)
             );
 
+            -- Content pipeline tables
+            CREATE TABLE IF NOT EXISTS content_posts (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_date       TEXT NOT NULL,
+                angle_type      TEXT NOT NULL,
+                raw_score       REAL NOT NULL,
+                effective_score REAL NOT NULL,
+                auto_published  INTEGER DEFAULT 0,
+                typefully_url   TEXT,
+                payload_path    TEXT,
+                created_at      TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS consensus_snapshots (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_date   TEXT NOT NULL,
+                token           TEXT NOT NULL,
+                direction       TEXT NOT NULL,
+                confidence_pct  REAL NOT NULL,
+                sm_long_usd     REAL,
+                sm_short_usd    REAL,
+                UNIQUE(snapshot_date, token)
+            );
+
+            CREATE TABLE IF NOT EXISTS allocation_snapshots (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_date   TEXT NOT NULL,
+                trader_id       TEXT NOT NULL,
+                weight          REAL NOT NULL,
+                UNIQUE(snapshot_date, trader_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS index_portfolio_snapshots (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_date   TEXT NOT NULL,
+                token           TEXT NOT NULL,
+                side            TEXT NOT NULL,
+                target_weight   REAL NOT NULL,
+                target_usd      REAL NOT NULL,
+                UNIQUE(snapshot_date, token, side)
+            );
+
             -- Indexes
             CREATE INDEX IF NOT EXISTS idx_leaderboard_address
                 ON leaderboard_snapshots(address);
@@ -197,6 +239,8 @@ class DataStore:
                 ON position_snapshots(address, token_symbol);
             CREATE INDEX IF NOT EXISTS idx_score_snapshots_date
                 ON score_snapshots(snapshot_date);
+            CREATE INDEX IF NOT EXISTS idx_content_posts_angle_date
+                ON content_posts(angle_type, post_date DESC);
             """
         )
 
@@ -822,6 +866,192 @@ class DataStore:
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
+    # Content posts
+    # ------------------------------------------------------------------
+
+    def insert_content_post(
+        self,
+        post_date,
+        angle_type: str,
+        raw_score: float,
+        effective_score: float,
+        auto_published: bool = False,
+        typefully_url: Optional[str] = None,
+        payload_path: Optional[str] = None,
+    ) -> None:
+        """Insert a content post record.  ``created_at`` is set automatically."""
+        created_at = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO content_posts
+                (post_date, angle_type, raw_score, effective_score,
+                 auto_published, typefully_url, payload_path, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                post_date.isoformat() if hasattr(post_date, "isoformat") else str(post_date),
+                angle_type,
+                raw_score,
+                effective_score,
+                1 if auto_published else 0,
+                typefully_url,
+                payload_path,
+                created_at,
+            ),
+        )
+        self._conn.commit()
+
+    def get_last_post_date(self, angle_type: str) -> Optional[str]:
+        """Return the most recent ``post_date`` for *angle_type*, or ``None``."""
+        row = self._conn.execute(
+            """
+            SELECT post_date FROM content_posts
+             WHERE angle_type = ?
+             ORDER BY post_date DESC
+             LIMIT 1
+            """,
+            (angle_type,),
+        ).fetchone()
+        return row["post_date"] if row else None
+
+    # ------------------------------------------------------------------
+    # Consensus snapshots
+    # ------------------------------------------------------------------
+
+    def insert_consensus_snapshot(
+        self,
+        snapshot_date,
+        token: str,
+        direction: str,
+        confidence_pct: float,
+        sm_long_usd: Optional[float] = None,
+        sm_short_usd: Optional[float] = None,
+    ) -> None:
+        """Insert or replace a consensus snapshot row."""
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO consensus_snapshots
+                (snapshot_date, token, direction, confidence_pct,
+                 sm_long_usd, sm_short_usd)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot_date.isoformat() if hasattr(snapshot_date, "isoformat") else str(snapshot_date),
+                token,
+                direction,
+                confidence_pct,
+                sm_long_usd,
+                sm_short_usd,
+            ),
+        )
+        self._conn.commit()
+
+    def get_consensus_snapshots_for_date(self, snapshot_date) -> list[dict]:
+        """Return all consensus snapshot rows for a given date."""
+        rows = self._conn.execute(
+            """
+            SELECT * FROM consensus_snapshots
+             WHERE snapshot_date = ?
+             ORDER BY token ASC
+            """,
+            (snapshot_date.isoformat() if hasattr(snapshot_date, "isoformat") else str(snapshot_date),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Allocation snapshots (content pipeline)
+    # ------------------------------------------------------------------
+
+    def insert_allocation_snapshot(
+        self,
+        snapshot_date,
+        trader_id: str,
+        weight: float,
+    ) -> None:
+        """Insert or replace an allocation snapshot row."""
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO allocation_snapshots
+                (snapshot_date, trader_id, weight)
+            VALUES (?, ?, ?)
+            """,
+            (
+                snapshot_date.isoformat() if hasattr(snapshot_date, "isoformat") else str(snapshot_date),
+                trader_id,
+                weight,
+            ),
+        )
+        self._conn.commit()
+
+    def get_allocation_snapshots_for_date(self, snapshot_date) -> list[dict]:
+        """Return all allocation snapshot rows for a given date."""
+        rows = self._conn.execute(
+            """
+            SELECT * FROM allocation_snapshots
+             WHERE snapshot_date = ?
+             ORDER BY weight DESC
+            """,
+            (snapshot_date.isoformat() if hasattr(snapshot_date, "isoformat") else str(snapshot_date),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Index portfolio snapshots
+    # ------------------------------------------------------------------
+
+    def insert_index_portfolio_snapshot(
+        self,
+        snapshot_date,
+        token: str,
+        side: str,
+        target_weight: float,
+        target_usd: float,
+    ) -> None:
+        """Insert or replace an index portfolio snapshot row."""
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO index_portfolio_snapshots
+                (snapshot_date, token, side, target_weight, target_usd)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot_date.isoformat() if hasattr(snapshot_date, "isoformat") else str(snapshot_date),
+                token,
+                side,
+                target_weight,
+                target_usd,
+            ),
+        )
+        self._conn.commit()
+
+    def get_index_portfolio_snapshots_for_date(self, snapshot_date) -> list[dict]:
+        """Return all index portfolio snapshot rows for a given date."""
+        rows = self._conn.execute(
+            """
+            SELECT * FROM index_portfolio_snapshots
+             WHERE snapshot_date = ?
+             ORDER BY token ASC, side ASC
+            """,
+            (snapshot_date.isoformat() if hasattr(snapshot_date, "isoformat") else str(snapshot_date),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Smart money helpers
+    # ------------------------------------------------------------------
+
+    def get_smart_money_addresses(self, date) -> set[str]:
+        """Return the set of trader IDs flagged as smart money on *date*."""
+        rows = self._conn.execute(
+            """
+            SELECT DISTINCT trader_id FROM score_snapshots
+             WHERE smart_money = 1 AND snapshot_date = ?
+            """,
+            (date.isoformat() if hasattr(date, "isoformat") else str(date),),
+        ).fetchall()
+        return {r["trader_id"] for r in rows}
+
+    # ------------------------------------------------------------------
     # Activity helpers
     # ------------------------------------------------------------------
 
@@ -863,6 +1093,10 @@ class DataStore:
         * ``trader_scores`` -- ``computed_at``
         * ``allocations`` -- ``computed_at``
         * ``position_snapshots`` -- ``captured_at``
+        * ``content_posts`` -- ``post_date``
+        * ``consensus_snapshots`` -- ``snapshot_date``
+        * ``allocation_snapshots`` -- ``snapshot_date``
+        * ``index_portfolio_snapshots`` -- ``snapshot_date``
         """
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         with self._conn:
@@ -880,4 +1114,16 @@ class DataStore:
             )
             self._conn.execute(
                 "DELETE FROM position_snapshots WHERE captured_at < ?", (cutoff,)
+            )
+            self._conn.execute(
+                "DELETE FROM content_posts WHERE post_date < ?", (cutoff,)
+            )
+            self._conn.execute(
+                "DELETE FROM consensus_snapshots WHERE snapshot_date < ?", (cutoff,)
+            )
+            self._conn.execute(
+                "DELETE FROM allocation_snapshots WHERE snapshot_date < ?", (cutoff,)
+            )
+            self._conn.execute(
+                "DELETE FROM index_portfolio_snapshots WHERE snapshot_date < ?", (cutoff,)
             )
