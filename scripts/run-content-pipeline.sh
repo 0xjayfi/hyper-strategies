@@ -1,55 +1,33 @@
 #!/usr/bin/env bash
-# Automated X Content Pipeline — Daily cron runner
-# Crontab entry:
-#   0 8 * * *  /home/jsong407/hyper-strategies/scripts/run-content-pipeline.sh >> /home/jsong407/hyper-strategies/logs/content-pipeline.log 2>&1
+# Multi-Angle Content Pipeline — Daily cron runner
+# 0 8 * * *  /home/jsong407/hyper-strategies/scripts/run-content-pipeline.sh >> logs/content-pipeline.log 2>&1
 
 set -euo pipefail
-
 cd /home/jsong407/hyper-strategies
 
-# Load pyenv so the correct Python + virtualenv are on PATH
+# Load pyenv and environment
 export PYENV_ROOT="$HOME/.pyenv"
 export PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"
 eval "$(pyenv init -)"
+set -a; source .env; set +a
 
-# Load environment
-set -a
-source .env
-set +a
+# Step 1: Take daily snapshots
+echo "[$(date -u)] Taking daily snapshots..."
+python -m src.content.dispatcher --snapshot
 
-# Take a fresh daily score snapshot so the comparison has up-to-date data
-echo "[$(date -u)] Taking daily score snapshot..."
-python -c "
-from src.scheduler import save_daily_score_snapshot
-from src.datastore import DataStore
-ds = DataStore('data/pnl_weighted.db')
-save_daily_score_snapshot(ds)
-ds.close()
-"
-
-echo "[$(date -u)] Starting content pipeline"
-
-# Step 1: Detect score movers
-python -m src.content_pipeline
-if [ $? -ne 0 ]; then
-    echo "[$(date -u)] No post-worthy content found. Done."
+# Step 2: Detect and select angles
+echo "[$(date -u)] Running angle detection..."
+python -m src.content.dispatcher --detect
+if [ ! -f data/content_selections.json ]; then
+    echo "[$(date -u)] No angles selected. Done."
     exit 0
 fi
 
-# Step 2: Verify payload is post-worthy
-if ! grep -q '"post_worthy": true' data/content_payload.json; then
-    echo "[$(date -u)] Payload not post-worthy. Done."
-    exit 0
-fi
-
-echo "[$(date -u)] Post-worthy content detected. Capturing dashboard screenshots..."
-
-# Step 3: Start Vite dev server (needed for screenshot proxy to backend)
+# Step 3: Start Vite dev server (shared across all angles)
 VITE_PID=""
 cleanup_vite() {
     if [ -n "$VITE_PID" ]; then
         kill "$VITE_PID" 2>/dev/null || true
-        echo "[$(date -u)] Vite dev server stopped."
     fi
 }
 trap cleanup_vite EXIT
@@ -59,21 +37,37 @@ npx vite --host 0.0.0.0 &>/dev/null &
 VITE_PID=$!
 cd ..
 
-# Wait for Vite to be ready
+VITE_READY=false
 for i in $(seq 1 15); do
     if curl -s -o /dev/null http://localhost:5173/; then
+        VITE_READY=true
         break
     fi
     sleep 1
 done
-echo "[$(date -u)] Vite dev server ready (PID=$VITE_PID)."
+if [ "$VITE_READY" = false ]; then
+    echo "[$(date -u)] ERROR: Vite dev server failed to start. Aborting."
+    exit 1
+fi
 
-# Step 4: Capture dashboard screenshots
-python -m src.screenshot_capture
+# Step 4: Process each selected angle (isolated — one failure doesn't block the next)
+python -c "
+import json
+with open('data/content_selections.json') as f:
+    selections = json.load(f)
+for s in selections:
+    print(s['angle_type'])
+" | while read -r angle; do
+    echo "[$(date -u)] Processing angle: $angle"
+    (
+        # Capture screenshots
+        python -m src.content.screenshot "$angle"
 
-echo "[$(date -u)] Screenshots captured. Launching Claude Code writer team..."
+        # Run writer team
+        cat "src/content/prompts/${angle}.md" | /home/jsong407/.local/bin/claude --dangerously-skip-permissions -p -
 
-# Step 5: Launch Claude Code to write and push to Typefully
-/home/jsong407/.local/bin/claude --dangerously-skip-permissions -p scripts/content-prompt.md
+        echo "[$(date -u)] Angle $angle complete."
+    ) || echo "[$(date -u)] Angle $angle FAILED — continuing to next angle."
+done
 
 echo "[$(date -u)] Content pipeline complete."
