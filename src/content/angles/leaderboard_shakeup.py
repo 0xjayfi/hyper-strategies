@@ -166,6 +166,20 @@ class LeaderboardShakeup(ContentAngle):
                     wait_selector='[data-testid="leaderboard-table"]',
                     capture_selector='[data-testid="leaderboard-table"]',
                     filename="leaderboard_shakeup.png",
+                    pre_capture_js=(
+                        "document.querySelectorAll('[data-testid=\"leaderboard-table\"] tbody tr')"
+                        ".forEach((r, i) => { if (i >= 10) r.style.display = 'none'; });"
+                        "let el = document.querySelector('[data-testid=\"leaderboard-table\"]');"
+                        "if (el) {"
+                        "  let p = el.parentElement;"
+                        "  while (p && p !== document.body) {"
+                        "    p.style.setProperty('flex', 'none', 'important');"
+                        "    p.style.setProperty('height', 'auto', 'important');"
+                        "    p.style.setProperty('min-height', '0', 'important');"
+                        "    p = p.parentElement;"
+                        "  }"
+                        "}"
+                    ),
                 ),
             ]
         )

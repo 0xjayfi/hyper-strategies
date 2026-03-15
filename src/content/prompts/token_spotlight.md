@@ -106,9 +106,9 @@ CRITICAL CONSTRAINTS (do not violate these while polishing):
 
 Output the final version in the same JSON format.
 
-### Agents 4a & 4b: Independent Reviewers (run in parallel)
+### Agents 4a, 4b & 4c: Independent Reviewers (run in parallel)
 
-Launch TWO subagents simultaneously. Each reviews the final draft from Agent 3 independently. They do NOT see each other's output.
+Launch THREE subagents simultaneously. Each reviews the final draft from Agent 3 independently. They do NOT see each other's output.
 
 #### Agent 4a: Fact & Data Reviewer
 
@@ -160,11 +160,41 @@ Output a review as JSON:
 ```
 If approved, set corrected_draft to null. If not, provide the corrected version.
 
+#### Agent 4c: Screenshot Reviewer
+
+Launch a subagent with this task:
+
+You are a screenshot quality reviewer. Your job is to visually inspect every screenshot PNG file that the draft references. Open and examine each file in `data/charts/` that appears in the draft's `screenshots` fields.
+
+The valid screenshot file for this angle is: `token_spotlight.png`.
+
+For each screenshot, check:
+
+**Relevance:**
+- Does the screenshot content match the tweet it's attached to? The token spotlight screenshot should show the notable position details (token, size, direction, wallet context).
+- Does the screenshot support the claims being made in the text? A reader should look at the image and immediately understand what the tweet is talking about.
+- Is the screenshot from the correct dashboard page for this angle, not a capture from an unrelated page?
+
+**Correctness:**
+- No blank or white areas where content should be (indicates a failed render or missing data)
+- No broken layouts, overlapping elements, or cut-off content
+- Resolution looks sharp and professional (not blurry, not pixelated)
+- Data is readable. Text, numbers, and labels are legible at the captured resolution
+- The screenshot captures the intended UI component, not excess whitespace or unrelated page sections
+- Charts and visualizations render completely (no half-loaded spinners or placeholder states)
+
+Output a review as JSON:
+```json
+{"approved": true/false, "issues": ["issue 1", "issue 2"], "screenshot_details": {"filename.png": {"relevant": true/false, "quality": "pass/fail", "notes": "..."}}}
+```
+If all screenshots pass, set approved to true and issues to an empty list.
+
 ### Merge reviewer feedback
 
-After both 4a and 4b complete:
-- If both approved: use the draft from Agent 3 as final.
-- If either has issues: merge the corrections from both reviewers into one final draft. If corrections conflict, prefer the fact-checker's version for data accuracy and the style reviewer's version for tone/formatting.
+After 4a, 4b, and 4c all complete:
+- If all approved: use the draft from Agent 3 as final.
+- If 4a or 4b has issues: merge the corrections from both reviewers into one final draft. If corrections conflict, prefer the fact-checker's version for data accuracy and the style reviewer's version for tone/formatting.
+- If 4c has issues: flag screenshot problems. If a screenshot is blank, broken, or irrelevant, remove it from the tweet's `screenshots` list rather than publishing a bad image. If removing it leaves the first tweet with no screenshot, note this as a CRITICAL issue and attempt to reassign a valid screenshot to the first tweet.
 
 ## Step 5: Push to Typefully
 

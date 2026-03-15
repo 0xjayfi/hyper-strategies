@@ -93,6 +93,14 @@ class ContentAngle(ABC):
 
     # -- concrete helpers ---------------------------------------------
 
+    def load_payload(self, payload: dict) -> None:
+        """Hydrate internal state from a saved payload dict.
+
+        Override in subclasses whose ``screenshot_config`` depends on
+        state set during ``detect``.  Called by the screenshot module
+        so that a fresh angle instance can produce the correct config.
+        """
+
     @property
     def prompt_path(self) -> str:
         """Return the path to the Markdown prompt template for this angle."""

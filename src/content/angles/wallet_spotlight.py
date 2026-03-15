@@ -305,6 +305,14 @@ class WalletSpotlight(ContentAngle):
             },
         }
 
+    # ---- load_payload ---------------------------------------------
+
+    def load_payload(self, payload: dict) -> None:
+        """Hydrate _mover from a saved payload so screenshot_config works."""
+        wallet = payload.get("wallet")
+        if wallet:
+            self._mover = {"address": wallet["address"]}
+
     # ---- screenshot_config ---------------------------------------
 
     def screenshot_config(self) -> ScreenshotConfig:

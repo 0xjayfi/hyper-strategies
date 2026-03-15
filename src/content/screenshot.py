@@ -8,6 +8,7 @@ Usage:
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -52,6 +53,13 @@ async def capture_angle_screenshots(
             f"Unknown angle_type {angle_type!r}. "
             f"Available: {[a.angle_type for a in ALL_ANGLES]}"
         )
+
+    # Hydrate angle state from saved payload (needed for angles whose
+    # screenshot_config depends on detection state, e.g. wallet address).
+    payload_path = Path(f"data/content_payload_{angle_type}.json")
+    if payload_path.exists():
+        with open(payload_path) as f:
+            angle.load_payload(json.load(f))
 
     config = angle.screenshot_config()
 
