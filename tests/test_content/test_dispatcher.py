@@ -28,7 +28,9 @@ from src.content.base import ContentAngle, ScreenshotConfig
 from src.content.dispatcher import (
     _DATA_DIR,
     detect_and_select,
+    take_consensus_snapshot,
     take_daily_snapshots,
+    take_index_portfolio_snapshot,
 )
 from src.datastore import DataStore
 
@@ -507,6 +509,152 @@ class TestTakeDailySnapshots:
 # ===================================================================
 # Edge cases
 # ===================================================================
+
+
+class TestStaleSelectionsCleanup:
+    """Bug 1: stale content_selections.json must be deleted when no angles qualify."""
+
+    def test_stale_file_deleted_when_no_angles_qualify(self, ds, tmp_path, monkeypatch):
+        """If no angles score > 0, any existing selections file is removed."""
+        monkeypatch.setattr("src.content.dispatcher._DATA_DIR", str(tmp_path))
+        stale_path = tmp_path / "content_selections.json"
+        stale_path.write_text('[{"angle_type": "old_stale_data"}]')
+
+        monkeypatch.setattr("src.content.dispatcher.ALL_ANGLES", [StubAngle("zero_scorer", raw_score=0.0)])
+
+        result = detect_and_select(ds)
+
+        assert result == []
+        assert not stale_path.exists(), "Stale selections file should be deleted"
+
+    def test_stale_file_deleted_when_all_in_cooldown(self, ds, tmp_path, monkeypatch):
+        """If all angles are blocked by cooldown, stale file is removed."""
+        monkeypatch.setattr("src.content.dispatcher._DATA_DIR", str(tmp_path))
+        stale_path = tmp_path / "content_selections.json"
+        stale_path.write_text('[{"angle_type": "old_stale_data"}]')
+
+        monkeypatch.setattr("src.content.dispatcher.ALL_ANGLES", [StubAngle("cooled", raw_score=0.8, cooldown_days=3)])
+        _insert_post(ds, "cooled", TODAY)  # Posted today -> cooldown active
+
+        result = detect_and_select(ds)
+
+        assert result == []
+        assert not stale_path.exists()
+
+    def test_file_not_deleted_when_angles_selected(self, ds, tmp_path, monkeypatch):
+        """Normal case: file is written (not deleted) when angles qualify."""
+        monkeypatch.setattr("src.content.dispatcher._DATA_DIR", str(tmp_path))
+
+        monkeypatch.setattr("src.content.dispatcher.ALL_ANGLES", [StubAngle("good_angle", raw_score=0.8)])
+
+        result = detect_and_select(ds)
+
+        assert len(result) == 1
+        assert (tmp_path / "content_selections.json").exists()
+
+
+class TestConsensusSnapshotImplementation:
+    """Bug 3: take_consensus_snapshot must populate consensus_snapshots table."""
+
+    def test_consensus_snapshot_populates_table(self, ds):
+        """With allocations and position snapshots, consensus rows are written."""
+        today = datetime.now(timezone.utc).date()
+
+        ds.upsert_trader("0xAAA")
+        ds.upsert_trader("0xBBB")
+        ds.insert_allocations({"0xAAA": 0.6, "0xBBB": 0.4})
+
+        ds.insert_position_snapshot("0xAAA", [
+            {"token_symbol": "BTC", "side": "Long", "position_value_usd": 10000,
+             "entry_price": 50000, "leverage_value": 1.0},
+            {"token_symbol": "ETH", "side": "Long", "position_value_usd": 5000,
+             "entry_price": 3000, "leverage_value": 1.0},
+        ])
+        ds.insert_position_snapshot("0xBBB", [
+            {"token_symbol": "BTC", "side": "Short", "position_value_usd": 8000,
+             "entry_price": 50000, "leverage_value": 1.0},
+        ])
+
+        take_consensus_snapshot(ds)
+
+        rows = ds.get_consensus_snapshots_for_date(today)
+        tokens = {r["token"] for r in rows}
+        assert "BTC" in tokens
+        assert "ETH" in tokens
+        btc_row = next(r for r in rows if r["token"] == "BTC")
+        assert btc_row["sm_long_usd"] > 0
+        assert btc_row["sm_short_usd"] > 0
+
+    def test_consensus_snapshot_empty_positions(self, ds):
+        """No positions -> no consensus rows, no error."""
+        today = datetime.now(timezone.utc).date()
+        take_consensus_snapshot(ds)
+        rows = ds.get_consensus_snapshots_for_date(today)
+        assert rows == []
+
+
+class TestIndexPortfolioSnapshotImplementation:
+    """Bug 4: take_index_portfolio_snapshot must populate index_portfolio_snapshots."""
+
+    def test_portfolio_snapshot_populates_table(self, ds):
+        today = datetime.now(timezone.utc).date()
+
+        ds.upsert_trader("0xAAA")
+        ds.upsert_trader("0xBBB")
+        ds.insert_allocations({"0xAAA": 0.6, "0xBBB": 0.4})
+        ds.insert_position_snapshot("0xAAA", [
+            {"token_symbol": "BTC", "side": "Long", "position_value_usd": 10000,
+             "entry_price": 50000, "leverage_value": 1.0},
+        ])
+        ds.insert_position_snapshot("0xBBB", [
+            {"token_symbol": "ETH", "side": "Short", "position_value_usd": 5000,
+             "entry_price": 3000, "leverage_value": 1.0},
+        ])
+
+        take_index_portfolio_snapshot(ds)
+
+        rows = ds.get_index_portfolio_snapshots_for_date(today)
+        assert len(rows) >= 2
+        tokens = {r["token"] for r in rows}
+        assert "BTC" in tokens
+        assert "ETH" in tokens
+
+    def test_portfolio_snapshot_empty_positions(self, ds):
+        today = datetime.now(timezone.utc).date()
+        take_index_portfolio_snapshot(ds)
+        rows = ds.get_index_portfolio_snapshots_for_date(today)
+        assert rows == []
+
+
+class TestCLINansenClient:
+    """Bug 2: CLI path must instantiate and pass NansenClient."""
+
+    @patch("src.content.dispatcher.detect_and_select")
+    @patch("src.content.dispatcher.take_daily_snapshots")
+    @patch("src.nansen_client.NansenClient")
+    def test_nansen_client_passed_to_snapshot(
+        self, MockNansen, mock_snapshots, mock_detect, monkeypatch
+    ):
+        monkeypatch.setenv("NANSEN_API_KEY", "test-key")
+        from src.content.dispatcher import _run_cli
+        _run_cli(snapshot=True, detect=False)
+
+        MockNansen.assert_called_once()
+        mock_snapshots.assert_called_once()
+        assert mock_snapshots.call_args[1]["nansen_client"] is not None
+
+    @patch("src.content.dispatcher.detect_and_select")
+    @patch("src.content.dispatcher.take_daily_snapshots")
+    @patch("src.nansen_client.NansenClient")
+    def test_nansen_client_passed_to_detect(
+        self, MockNansen, mock_snapshots, mock_detect, monkeypatch
+    ):
+        monkeypatch.setenv("NANSEN_API_KEY", "test-key")
+        from src.content.dispatcher import _run_cli
+        _run_cli(snapshot=False, detect=True)
+
+        mock_detect.assert_called_once()
+        assert mock_detect.call_args[1]["nansen_client"] is not None
 
 
 class TestEdgeCases:

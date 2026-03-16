@@ -39,6 +39,11 @@ cd ..
 
 VITE_READY=false
 for i in $(seq 1 15); do
+    # First check: is our Vite process still alive?
+    if ! kill -0 "$VITE_PID" 2>/dev/null; then
+        echo "[$(date -u)] ERROR: Vite process (PID $VITE_PID) died."
+        exit 1
+    fi
     if curl -s -o /dev/null http://localhost:5173/; then
         VITE_READY=true
         break
@@ -46,7 +51,7 @@ for i in $(seq 1 15); do
     sleep 1
 done
 if [ "$VITE_READY" = false ]; then
-    echo "[$(date -u)] ERROR: Vite dev server failed to start. Aborting."
+    echo "[$(date -u)] ERROR: Vite dev server failed to start within 15s. Aborting."
     exit 1
 fi
 

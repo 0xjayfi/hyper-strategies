@@ -195,42 +195,21 @@ After 4a, 4b, and 4c all complete:
 - If 4a or 4b has issues: merge the corrections from both reviewers into one final draft. If corrections conflict, prefer the fact-checker's version for data accuracy and the style reviewer's version for tone/formatting.
 - If 4c has issues: flag screenshot problems. If a screenshot is blank, broken, or irrelevant, remove it from the tweet's `screenshots` list rather than publishing a bad image. If removing it leaves the first tweet with no screenshot, note this as a CRITICAL issue and attempt to reassign a valid screenshot to the first tweet.
 
-## Step 5: Push to Typefully (AUTO-PUBLISH)
+## Step 5: Push to Typefully and record (AUTO-PUBLISH)
 
 After the merge step completes (the final draft is ready):
 
-1. Parse the final JSON output to get the tweet texts and their `screenshots` lists.
-2. Upload each unique screenshot file via the Typefully media API:
+1. Parse the final JSON output into a Python dict with `tweets` list.
+2. Call `post_and_record()` which handles media upload, draft creation, scheduling, AND recording to the database:
    ```python
-   import asyncio, os
-   from src.typefully_client import TypefullyClient
-   client = TypefullyClient(
-       api_key=os.environ['TYPEFULLY_API_KEY'],
-       social_set_id=int(os.environ['TYPEFULLY_SOCIAL_SET_ID']),
-   )
-   media_map = {}
-   for tweet in final_draft['tweets']:
-       for filename in tweet.get('screenshots', []):
-           if filename not in media_map:
-               media_map[filename] = asyncio.run(client.upload_media(f'data/charts/{filename}'))
-   ```
-3. Build `per_post_media` and create the draft with `publish_at` set to now + 90 minutes (1.5 hour buffer before publishing):
-   ```python
-   from datetime import datetime, timedelta, timezone
+   from src.content.poster import post_and_record
 
-   per_post_media = []
-   for tweet in final_draft['tweets']:
-       ids = [media_map[f] for f in tweet.get('screenshots', []) if f in media_map]
-       per_post_media.append(ids)
-
-   publish_at = (datetime.now(timezone.utc) + timedelta(minutes=90)).isoformat()
-   result = asyncio.run(client.create_draft(
-       posts=[t['text'] for t in final_draft['tweets']],
+   result = post_and_record(
+       draft=final_draft,
+       angle_type='index_portfolio',
        title='Index Portfolio Update — DATE',
-       per_post_media=per_post_media,
-       publish_at=publish_at,
-   ))
+       auto_publish=True,
+   )
    print(result['private_url'])
-   asyncio.run(client.close())
    ```
-4. Print the Typefully draft URL to confirm success. This post is scheduled to publish in ~90 minutes.
+3. Print the Typefully draft URL to confirm success. This post is scheduled to publish in ~90 minutes.

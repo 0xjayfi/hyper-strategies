@@ -26,6 +26,7 @@ from src.config import (
 from src.content.angles import ALL_ANGLES
 from src.datastore import DataStore
 from src.scheduler import save_daily_score_snapshot
+from src.strategy_interface import build_index_portfolio, weighted_consensus
 
 logger = logging.getLogger(__name__)
 
@@ -39,31 +40,122 @@ _DATA_DIR = "data"
 
 
 def take_consensus_snapshot(datastore: DataStore, nansen_client=None) -> None:
-    """Take a consensus snapshot from Nansen market overview data.
+    """Compute consensus from current allocations + positions and snapshot it.
 
-    This is a placeholder — the actual Nansen market overview integration
-    will be connected as a follow-up.
+    For each token held by allocated traders, computes weighted long/short
+    exposure and derives a consensus direction and confidence percentage.
     """
-    if nansen_client is None:
-        logger.warning(
-            "Skipping consensus snapshot: no nansen_client provided"
-        )
+    today = datetime.now(timezone.utc).date()
+
+    allocations = datastore.get_latest_allocations()
+    if not allocations:
+        logger.info("Consensus snapshot: no allocations, skipping")
         return
 
-    logger.info(
-        "Would take consensus snapshot (Nansen market overview integration pending)"
-    )
+    # Gather latest positions per allocated trader
+    trader_positions: dict[str, list] = {}
+    for address in allocations:
+        positions = datastore.get_latest_position_snapshot(address)
+        if positions:
+            trader_positions[address] = [
+                {
+                    "token_symbol": p["token_symbol"],
+                    "side": p["side"],
+                    "position_value_usd": abs(float(p["position_value_usd"])),
+                }
+                for p in positions
+            ]
+
+    # Collect all unique tokens across all positions
+    all_tokens: set[str] = set()
+    for positions in trader_positions.values():
+        for p in positions:
+            all_tokens.add(p["token_symbol"])
+
+    if not all_tokens:
+        logger.info("Consensus snapshot: no positions found, skipping")
+        return
+
+    count = 0
+    for token in sorted(all_tokens):
+        result = weighted_consensus(token, allocations, trader_positions)
+        long_usd = result["long_weight"]
+        short_usd = result["short_weight"]
+        total = long_usd + short_usd
+
+        if total == 0:
+            continue
+
+        confidence_pct = (max(long_usd, short_usd) / total) * 100
+        direction = "LONG" if long_usd >= short_usd else "SHORT"
+
+        datastore.insert_consensus_snapshot(
+            snapshot_date=today,
+            token=token,
+            direction=direction,
+            confidence_pct=round(confidence_pct, 1),
+            sm_long_usd=round(long_usd, 2),
+            sm_short_usd=round(short_usd, 2),
+        )
+        count += 1
+
+    logger.info("Consensus snapshot: %d tokens snapshotted", count)
 
 
 def take_index_portfolio_snapshot(datastore: DataStore) -> None:
-    """Take an index portfolio snapshot.
+    """Compute index portfolio from allocations + positions and snapshot it.
 
-    This is a placeholder — the actual implementation depends on how
-    portfolio data is sourced.
+    Uses build_index_portfolio() to aggregate weighted positions across
+    all allocated traders, then stores each (token, side) entry.
     """
-    logger.info(
-        "Would take index portfolio snapshot (implementation pending)"
-    )
+    today = datetime.now(timezone.utc).date()
+
+    allocations = datastore.get_latest_allocations()
+    if not allocations:
+        logger.info("Index portfolio snapshot: no allocations, skipping")
+        return
+
+    # Gather latest positions per allocated trader
+    trader_positions: dict[str, list] = {}
+    for address in allocations:
+        positions = datastore.get_latest_position_snapshot(address)
+        if positions:
+            trader_positions[address] = [
+                {
+                    "token_symbol": p["token_symbol"],
+                    "side": p["side"],
+                    "position_value_usd": abs(float(p["position_value_usd"])),
+                }
+                for p in positions
+            ]
+
+    if not trader_positions:
+        logger.info("Index portfolio snapshot: no positions found, skipping")
+        return
+
+    # Use a notional $100k account for weight normalization (absolute value
+    # doesn't matter since we normalize to relative weights below)
+    portfolio = build_index_portfolio(allocations, trader_positions, 100_000.0)
+
+    if not portfolio:
+        logger.info("Index portfolio snapshot: empty portfolio, skipping")
+        return
+
+    total_usd = sum(portfolio.values())
+
+    count = 0
+    for (token, side), target_usd in portfolio.items():
+        weight = (target_usd / total_usd) if total_usd > 0 else 0.0
+        datastore.insert_index_portfolio_snapshot(
+            snapshot_date=today,
+            token=token,
+            side=side,
+            target_weight=round(weight, 4),
+            target_usd=round(target_usd, 2),
+        )
+        count += 1
+
+    logger.info("Index portfolio snapshot: %d entries snapshotted", count)
 
 
 def take_daily_snapshots(datastore: DataStore, nansen_client=None) -> None:
@@ -113,6 +205,12 @@ def detect_and_select(datastore: DataStore, nansen_client=None) -> list[dict]:
     angle qualifies.
     """
     today = datetime.now(timezone.utc).date()
+
+    # Remove any stale selections file from a previous run
+    selections_path = os.path.join(_DATA_DIR, "content_selections.json")
+    if os.path.exists(selections_path):
+        os.remove(selections_path)
+        logger.info("Removed stale %s", selections_path)
 
     # ----- score each angle -----
     scored: list[dict] = []
@@ -219,7 +317,6 @@ def detect_and_select(datastore: DataStore, nansen_client=None) -> list[dict]:
         )
         return []
 
-    selections_path = os.path.join(_DATA_DIR, "content_selections.json")
     with open(selections_path, "w") as f:
         json.dump(selections_output, f, indent=2)
     logger.info("Wrote selections: %s", selections_path)
@@ -230,6 +327,21 @@ def detect_and_select(datastore: DataStore, nansen_client=None) -> list[dict]:
 # ------------------------------------------------------------------
 # CLI entry-point
 # ------------------------------------------------------------------
+
+def _run_cli(snapshot: bool = False, detect: bool = False) -> None:
+    """CLI entry-point logic, extracted for testability."""
+    from src.nansen_client import NansenClient
+
+    nansen_client = NansenClient()  # Reads NANSEN_API_KEY from env
+    datastore = DataStore()
+    try:
+        if snapshot:
+            take_daily_snapshots(datastore, nansen_client=nansen_client)
+        if detect:
+            detect_and_select(datastore, nansen_client=nansen_client)
+    finally:
+        datastore.close()
+
 
 if __name__ == "__main__":
     import argparse
@@ -254,11 +366,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    datastore = DataStore()
-    try:
-        if args.snapshot:
-            take_daily_snapshots(datastore)
-        if args.detect:
-            detect_and_select(datastore)
-    finally:
-        datastore.close()
+    _run_cli(snapshot=args.snapshot, detect=args.detect)
